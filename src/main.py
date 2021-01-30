@@ -1,16 +1,13 @@
 import asyncio
+import callofduty
 import discord
 import os
 import requests
-import callofduty
 from callofduty import Mode, Platform, Title
 from keep_alive import keep_alive
 
 #init
 client = discord.Client()
-#cod = await callofduty.Login(os.getenv('CODUSER'),os.getenv('CODPASS'))
-#cod = await callofduty.Login('***REMOVED***','***REMOVED***')
-
 
 @client.event
 async def on_ready():
@@ -48,3 +45,4 @@ async def on_message(message):
 
 keep_alive()
 client.run(os.getenv('TOKEN'))
+print("discord client started.")
