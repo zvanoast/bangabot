@@ -41,6 +41,5 @@ async def on_message(message):
         except ValueError:
             await message.channel.send("The proper usage is '!codtest USERNAME#1111'")
 
-keep_alive()
 client.run(os.getenv('TOKEN'))
 print("discord client started.")
