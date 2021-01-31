@@ -20,7 +20,7 @@ async def on_message(message):
     if message.content.startswith('!hello'):
         await message.channel.send('BEEEWARE THE MILKY PIRATE!')
 
-    if message.content.startswith('big oof'):
+    if 'big oof' in message.content:
         await message.channel.send(file=discord.File('img/OOF.png'))
 
     if message.content.startswith('!codtest'):
