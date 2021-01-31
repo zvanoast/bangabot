@@ -4,7 +4,6 @@ import discord
 import os
 import requests
 from callofduty import Mode, Platform, Title
-from keep_alive import keep_alive
 
 #init
 client = discord.Client()
