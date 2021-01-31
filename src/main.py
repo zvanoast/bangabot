@@ -4,7 +4,6 @@ import discord
 import os
 import requests
 from callofduty import Mode, Platform, Title
-from keep_alive import keep_alive
 
 #init
 client = discord.Client()
@@ -41,6 +40,5 @@ async def on_message(message):
         except ValueError:
             await message.channel.send("The proper usage is '!codtest USERNAME#1111'")
 
-keep_alive()
 client.run(os.getenv('TOKEN'))
 print("discord client started.")
