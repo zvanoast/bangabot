@@ -40,7 +40,6 @@ async def on_message(message):
             #wl = profile["weekly"]["mode"]["br_rebirth_rbrthquad"]["properties"]["wins"] / profile["lifetime"]["mode"]["br_all"]["properties"]["gamesPlayed"]
 
             await message.channel.send(f"Zoney rebirth quads weekly stats: \n{result[0].username} ({result[0].platform.name}) Level: {level}\nKills: {kills}, Deaths: {deaths}, K/D Ratio: {kd}, Kills per game: {killsPerGame}")
-            #await message.
         except ValueError:
             await message.channel.send("The proper usage is '!codtest USERNAME#1111'")
 
