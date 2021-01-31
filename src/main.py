@@ -19,7 +19,7 @@ async def on_message(message):
         return
 
     if message.content.startswith('!hello'):
-        await message.channel.send('Fuck Off!')
+        await message.channel.send('BEEEWARE THE MILKY PIRATE!')
 
     if message.content.startswith('big oof'):
         await message.channel.send(file=discord.File('img/OOF.png'))
