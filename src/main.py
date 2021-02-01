@@ -1,44 +1,28 @@
-import asyncio
-import callofduty
 import discord
-import os
 import requests
-from callofduty import Mode, Platform, Title
+import os
+from discord.ext import commands
 
 #init
-client = discord.Client()
+bot = discord.Client()
+bot = commands.Bot(command_prefix='!')
 
-@client.event
+@bot.event
 async def on_ready():
-    print('We have logged in as {0.user}'.format(client))
+    print('Logged in as {0.user}'.format(bot))
 
-@client.event
+# Handle listening to all incoming messages
+@bot.event
 async def on_message(message):
-    if message.author == client.user:
+    if message.author == bot.user:
         return
 
-    if message.content.startswith('!hello'):
-        await message.channel.send('BEEEWARE THE MILKY PIRATE!')
-
-    if message.content.startswith('big oof'):
+    if 'big oof' in message.content:
         await message.channel.send(file=discord.File('img/OOF.png'))
 
-    if message.content.startswith('!codtest'):
-        try:
-            cod = await callofduty.Login(os.getenv('CODUSER'),os.getenv('CODPASS'))
-            username = message.content.split(' ')[1]
-            result = await cod.SearchPlayers(Platform.BattleNet, username, limit=1)
-            profile = await result[0].profile(Title.ModernWarfare, Mode.Warzone)
+    # Explicit commands will not work without the following
+    await bot.process_commands(message)
 
-            level = profile["level"]
-            kills = profile["weekly"]["mode"]["br_mini_rebirth_mini_royale_quads"]["properties"]["kills"]
-            deaths = profile["weekly"]["mode"]["br_mini_rebirth_mini_royale_quads"]["properties"]["deaths"]
-            kd = profile["weekly"]["mode"]["br_mini_rebirth_mini_royale_quads"]["properties"]["kdRatio"]
-            killsPerGame = profile["weekly"]["mode"]["br_mini_rebirth_mini_royale_quads"]["properties"]["killsPerGame"]
-
-            await message.channel.send(f"Zoney rebirth quads weekly stats: \n{result[0].username} ({result[0].platform.name}) Level: {level}\nKills: {kills}, Deaths: {deaths}, K/D Ratio: {kd}, Kills per game: {killsPerGame}")
-        except ValueError:
-            await message.channel.send("The proper usage is '!codtest USERNAME#1111'")
-
-client.run(os.getenv('TOKEN'))
-print("discord client started.")
+bot.load_extension('cogs.general')
+bot.load_extension('cogs.cod')
+bot.run(os.getenv('TOKEN'))
