@@ -17,7 +17,7 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    if 'big oof' in message.content:
+    if 'big oof' in message.content.lower():
         await message.channel.send(file=discord.File('img/OOF.png'))
 
     # Explicit commands will not work without the following
