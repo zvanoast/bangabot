@@ -48,6 +48,14 @@ class General(commands.Cog):
     async def hello(self, ctx):
         await ctx.message.channel.send(self.determineGreeting())
 
+    @commands.command(
+        brief='Show a gif',
+        description='Show a gif. Current options: danayeah')
+    async def gif(self, ctx, arg):
+        if arg == 'danayeah':
+            await ctx.message.channel.send(file=discord.File('img/danayeah.gif'))
+
+
     # Helper functions
     def determineGreeting(self):
         responses = []
