@@ -50,10 +50,16 @@ class General(commands.Cog):
 
     @commands.command(
         brief='Show a gif',
-        description='Show a gif. Current options: danayeah')
-    async def gif(self, ctx, arg):
-        if arg == 'danayeah':
-            await ctx.message.channel.send(file=discord.File('img/danayeah.gif'))
+        description='Show a gif. Current options: dana yeah, dana bummed, dana thumbsup')
+    async def gif(self, ctx, arg, arg2):
+        if arg == 'dana':
+            if arg2 == 'yeah' or arg2 == 'y':
+                await ctx.message.channel.send(file=discord.File('img/danayeah.gif'))
+            if arg2 == 'bummed' or arg2 == 'b':
+                await ctx.message.channel.send(file=discord.File('img/danabummed.gif'))
+            if arg2 == 'thumbsup' or arg2 == 'tu':
+                await ctx.message.channel.send(file=discord.File('img/danathumbsup.gif'))
+
 
 
     # Helper functions
