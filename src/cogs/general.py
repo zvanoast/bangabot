@@ -50,7 +50,7 @@ class General(commands.Cog):
 
     @commands.command(
         brief='Show a gif',
-        description='Show a gif. Current options: dana yeah, dana bummed, dana thumbsup')
+        description='Show a gif. Current options: dana yeah(y), dana bummed(b), dana thumbsup(tu)')
     async def gif(self, ctx, arg, arg2):
         if arg == 'dana':
             if arg2 == 'yeah' or arg2 == 'y':
@@ -59,8 +59,6 @@ class General(commands.Cog):
                 await ctx.message.channel.send(file=discord.File('img/danabummed.gif'))
             if arg2 == 'thumbsup' or arg2 == 'tu':
                 await ctx.message.channel.send(file=discord.File('img/danathumbsup.gif'))
-
-
 
     # Helper functions
     def determineGreeting(self):
