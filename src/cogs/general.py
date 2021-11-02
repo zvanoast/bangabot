@@ -60,6 +60,12 @@ class General(commands.Cog):
             if arg2 == 'thumbsup' or arg2 == 'tu':
                 await ctx.message.channel.send(file=discord.File('img/danathumbsup.gif'))
 
+    @commands.command(
+        brief='Repost.. BANT',
+        description='Repost.. BANT')
+    async def bant(self, ctx):
+        await ctx.message.channel.send(file=discord.File('img/repostBANT.png'))
+
     # Helper functions
     def determineGreeting(self):
         responses = []
