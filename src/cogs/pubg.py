@@ -75,7 +75,7 @@ class PUBG(commands.Cog):
             msg += chosenGuns[0] + ' + ' + chosenGuns[1]
         
         # Each mod has less of a chance, starting at 10%
-        modChance = 10
+        modChance = 15
         activeMods = []
         random.shuffle(mods)
         for mod in mods:
