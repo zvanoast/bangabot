@@ -25,4 +25,5 @@ async def on_message(message):
 
 bot.load_extension('cogs.general')
 bot.load_extension('cogs.cod')
+bot.load_extension('cogs.pubg')
 bot.run(os.getenv('TOKEN'))
