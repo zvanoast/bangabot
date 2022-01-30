@@ -40,7 +40,7 @@ async def on_message(message: discord.Message):
         if isinstance(message.channel,discord.DMChannel):
             channel_name = 'DM with ' + message.channel.me.name
         else:
-            channel_name = message.channel.name
+            channel_name = message.channel.mention
 
         user = message.author.name
         datetime = message.created_at.replace(tzinfo = timezone('UTC'))
