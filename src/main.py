@@ -1,11 +1,24 @@
 import discord
-import requests
 import os
+from urlextract import URLExtract
 from discord.ext import commands
+from datetime import datetime
+#db
+from database.database import Base, Session, engine
+from database.orm import Link, StartupHistory
 
 #init
 bot = discord.Client()
 bot = commands.Bot(command_prefix='!')
+
+#init DB
+Base.metadata.create_all(engine)
+db = Session()
+
+#log startup history
+history = StartupHistory(datetime.now())
+db.add(history)
+db.commit()
 
 @bot.event
 async def on_ready():
@@ -13,9 +26,50 @@ async def on_ready():
 
 # Handle listening to all incoming messages
 @bot.event
-async def on_message(message):
+async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
+
+    extractor = URLExtract()
+    urls = extractor.find_urls(message.content, True, True, False, True)
+    
+    if len(urls) > 0:
+        print('URL detected..')
+        #to support testing and the off-chance DM to BangaBot
+        if isinstance(message.channel,discord.DMChannel):
+            channel_name = 'DM with ' + message.channel.me.name
+        else:
+            channel_name = message.channel.name
+
+        user = message.author.name
+        datetime = message.created_at
+        jump_url = message.jump_url
+
+        for url in urls:
+            matched_links = db.query(Link) \
+                .filter(Link.url == str(url)) \
+                .all()
+            
+            if len(matched_links) > 0:
+                print("URL matched.")
+                # should never be > 1
+                matched_link = matched_links[0]
+
+                matched_link_datetime = matched_link.date
+                date = matched_link_datetime.strftime("%m/%d/%Y")
+                time = matched_link_datetime.strftime("%H:%M:%S")
+
+                repost_details = 'BANT! This url was posted by ' + matched_link.user + ' in ' + matched_link.channel + ' on ' + date + ' at ' + time + '\n' \
+                    + matched_link.jump_url
+                await message.channel.send(file=discord.File('img/repostBANT.png'))
+                await message.channel.send(repost_details)
+            else:
+                link = Link(url, user, channel_name, datetime, jump_url)
+                db.add(link)
+                db.commit()
+                print("URL saved")
+
+        print(user, channel_name, datetime, jump_url)
 
     if 'big oof' in message.content.lower():
         await message.channel.send(file=discord.File('img/OOF.png'))
