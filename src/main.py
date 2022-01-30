@@ -1,5 +1,6 @@
 import discord
 import os
+from pytz import timezone
 from urlextract import URLExtract
 from discord.ext import commands
 from datetime import datetime
@@ -42,7 +43,7 @@ async def on_message(message: discord.Message):
             channel_name = message.channel.name
 
         user = message.author.name
-        datetime = message.created_at
+        datetime = message.created_at.replace(tzinfo = timezone('UTC'))
         jump_url = message.jump_url
 
         for url in urls:
@@ -55,7 +56,7 @@ async def on_message(message: discord.Message):
                 # should never be > 1
                 matched_link = matched_links[0]
 
-                matched_link_datetime = matched_link.date
+                matched_link_datetime = matched_link.date.astimezone(timezone('US/Eastern'))
                 date = matched_link_datetime.strftime("%m/%d/%Y")
                 time = matched_link_datetime.strftime("%H:%M:%S")
 
