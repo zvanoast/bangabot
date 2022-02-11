@@ -6,13 +6,13 @@ normalGuns = [
     'AR',
     'Sniper',
     'SMG',
-    'DMR',
-    'LMG'
+    'DMR'
 ]
 
 rareGuns = [
     'Crossbow',
-    'EMT Gear'
+    'EMT Gear',
+    'LMG'
 ]
 
 # Gun loadout "overrides"
@@ -28,9 +28,10 @@ rareOverrides = [
 # Modifiers
 mods = [
     'You must keep guns you get a kill with.',
-    'Crate hunters!',
+    'Crate hunter.',
     'MAD MAX!',
-    'GO BANGA!'
+    'GO BANGA!',
+    'Demolitions EXPERT.'
 ]
 
 class PUBG(commands.Cog):
