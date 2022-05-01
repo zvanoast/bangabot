@@ -43,7 +43,7 @@ class PUBG(commands.Cog):
         brief='Bored of PUBG? Mix it up!',
         description='Bored of PUBG? Mix it up!')
     async def pubg(self, ctx):
-        msg = 'Your loadout:\n'
+        msg = ctx.author.name + '\'s loadout:\n'
         chosenGuns = []
 
         # 20% chance to override guns
