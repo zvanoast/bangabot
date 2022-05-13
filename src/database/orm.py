@@ -18,6 +18,14 @@ class Link(Base):
         self.date = date
         self.jump_url = jump_url
 
+class LinkExclusion(Base):
+    __tablename__ = 'link_exclusions'
+    id = Column(Integer, primary_key=True)
+    url = Column(String)
+
+    def __init__(self, url):
+        self.url = url
+
 class StartupHistory(Base):
     __tablename__ = 'startup_history'
     id = Column(Integer, primary_key=True)
@@ -25,3 +33,5 @@ class StartupHistory(Base):
 
     def __init__(self, date):
         self.date = date
+
+
