@@ -6,7 +6,7 @@ from discord.ext import commands
 from datetime import datetime
 #db
 from database.database import Base, Session, engine
-from database.orm import Link, StartupHistory
+from database.orm import Link, LinkExclusion, StartupHistory
 
 #init
 bot = discord.Client()
@@ -54,7 +54,22 @@ async def on_message(message: discord.Message):
             if len(matched_links) > 0:
                 print("URL matched.")
                 # should never be > 1
-                matched_link = matched_links[0]
+                matched_link : Link = matched_links[0]
+
+                exclusions : list[LinkExclusion] = db.query(LinkExclusion).all()
+
+                excluded_urls : list = []
+                for exclusion in exclusions:
+                    excluded_urls.append(exclusion.url)
+
+                exclusion_found = False
+                for e in excluded_urls:
+                    if e in matched_link.url:
+                        exclusion_found = True
+                        print("Matched url (aka loan) skipped due to exception!")
+
+                if exclusion_found:
+                    break
 
                 matched_link_datetime = matched_link.date.astimezone(timezone('US/Eastern'))
                 date = matched_link_datetime.strftime("%m/%d/%Y")
