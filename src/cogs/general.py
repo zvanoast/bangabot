@@ -53,17 +53,17 @@ class General(commands.Cog):
     async def gif(self, ctx, arg, arg2):
         if arg == 'dana':
             if arg2 == 'yeah' or arg2 == 'y':
-                await ctx.message.channel.send(file=discord.File('img/danayeah.gif'))
+                await ctx.message.channel.send(file=discord.File('src/img/danayeah.gif'))
             if arg2 == 'bummed' or arg2 == 'b':
-                await ctx.message.channel.send(file=discord.File('img/danabummed.gif'))
+                await ctx.message.channel.send(file=discord.File('src/img/danabummed.gif'))
             if arg2 == 'thumbsup' or arg2 == 'tu':
-                await ctx.message.channel.send(file=discord.File('img/danathumbsup.gif'))
+                await ctx.message.channel.send(file=discord.File('src/img/danathumbsup.gif'))
 
     @commands.command(
         brief='Repost.. BANT',
         description='Repost.. BANT')
     async def bant(self, ctx):
-        await ctx.message.channel.send(file=discord.File('img/repostBANT.png'))
+        await ctx.message.channel.send(file=discord.File('src/img/repostBANT.png'))
 
     # Helper functions
     def determineGreeting(self):
