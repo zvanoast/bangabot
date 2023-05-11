@@ -21,10 +21,9 @@ class General(commands.Cog):
 
     uncommonResponses = [
         'BEEEWARE THE MILKY PIRATE!',
-        'Sup bitchtits?',
+        'BANGA DOOTS?',
         'Piss off, innit!',
-        'Oh shit waddup',
-        'FUCK SALT!'
+        'Oh shit waddup'
     ]
 
     morningResponses = [
