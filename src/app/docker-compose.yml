@@ -1,0 +1,27 @@
+version: '3'
+services:
+  app:
+    environment:
+      - DBUSER=${DBUSER}
+      - DBPASS=${DBPASS}
+      - DBNAME=${DBNAME}
+      - DBPORT=5433
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 8000:8000
+    depends_on:
+      - db
+  db:
+    image: postgres
+    environment:
+      POSTGRES_USER: ${DBUSER}
+      POSTGRES_PASSWORD: ${DBPASS}
+      POSTGRES_DB: ${DBNAME}
+    ports:
+      - 5433:5432
+    volumes:
+    - db-data:/var/lib/postgresql/data
+volumes:
+  db-data:
