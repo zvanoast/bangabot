@@ -1,0 +1,29 @@
+name: Deploy to EC2
+
+on:
+    push:
+        branches:
+            - main
+
+jobs:
+    deploy:
+        name: Deploy to EC2 on push to main branch
+        runs-on: ubuntu-latest
+        environment: Production
+
+        steps:
+           - name: Checkout code
+             uses: actions/checkout@v2
+           - name: Set up Python
+             uses: actions/setup-python@v2
+             with:
+              python-version: 3.x
+           - name: Install dependencies
+             run: pip install -r requirements.txt
+           - name: Deployment thing
+             uses: easingthemes/ssh-deploy@main
+             env:
+              SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+              REMOTE_HOST: ${{ secrets.EC2_REMOTE_HOST }}
+              REMOTE_USER: ${{ secrets.EC2_REMOTE_USER }}
+              TARGET: ${{ secrets.EC2_TARGET }}

@@ -1,11 +1,12 @@
 import discord
 import os
+import database.database
 from pytz import timezone
 from urlextract import URLExtract
 from discord.ext import commands
 from datetime import datetime
 #db
-from database.database import Base, Session, engine
+from database.database import engine, Base, Session
 from database.orm import Link, LinkExclusion, StartupHistory
 
 #init
