@@ -1,6 +1,5 @@
 import discord
 import os
-import database.database
 from pytz import timezone
 from urlextract import URLExtract
 from discord.ext import commands
