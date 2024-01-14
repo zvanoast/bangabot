@@ -5,7 +5,7 @@ from urlextract import URLExtract
 from discord.ext import commands
 from datetime import datetime
 #db
-from database.database import Base, Session, engine
+from database.database import engine, Base, Session
 from database.orm import Link, LinkExclusion, StartupHistory
 
 #init
@@ -77,7 +77,7 @@ async def on_message(message: discord.Message):
 
                 repost_details = 'BANT! This url was posted by ' + matched_link.user + ' in ' + matched_link.channel + ' on ' + date + ' at ' + time + '\n' \
                     + matched_link.jump_url
-                await message.channel.send(file=discord.File('img/repostBANT.png'))
+                await message.channel.send(file=discord.File('src/img/repostBANT.png'))
                 await message.channel.send(repost_details)
             else:
                 link = Link(url, user, channel_name, datetime, jump_url)
@@ -88,7 +88,7 @@ async def on_message(message: discord.Message):
         print(user, channel_name, datetime, jump_url)
 
     if 'big oof' in message.content.lower():
-        await message.channel.send(file=discord.File('img/OOF.png'))
+        await message.channel.send(file=discord.File('src/img/OOF.png'))
 
     # Explicit commands will not work without the following
     await bot.process_commands(message)
