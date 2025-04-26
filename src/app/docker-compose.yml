@@ -4,6 +4,8 @@ services:
     environment:
       DBHOST: db
       DBPORT: 5432
+      # Added logging environment variables
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     env_file:
       - .env
     build:
@@ -15,6 +17,12 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    # Configure logging for Docker
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
   db:
     image: postgres
     environment:
@@ -31,5 +39,11 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
     restart: unless-stopped
+    # Configure logging for Docker
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
 volumes:
   db-data:

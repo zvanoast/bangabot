@@ -1,6 +1,8 @@
 import discord
 import os
 import time
+import logging
+import sys
 from pytz import timezone
 from urlextract import URLExtract
 from discord.ext import commands
@@ -8,6 +10,30 @@ from datetime import datetime
 #db
 from database.database import engine, Base, Session
 from database.orm import Link, LinkExclusion, StartupHistory
+
+# Configure logging
+def setup_logging():
+    # Get environment variables or use defaults
+    log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+    is_test = 'PR_NUMBER' in os.environ
+    env_name = f"PR#{os.getenv('PR_NUMBER')}" if is_test else "PROD"
+    
+    # Create logger
+    logger = logging.getLogger('bangabot')
+    logger.setLevel(getattr(logging, log_level))
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter(
+        f'%(asctime)s [{env_name}] [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# Initialize logger
+logger = setup_logging()
 
 #init
 bot = discord.Client()
@@ -27,12 +53,12 @@ def initialize_database(max_retries=5, retry_interval=3):
             db.add(history)
             db.commit()
             
-            print("Database initialized successfully!")
+            logger.info("Database initialized successfully!")
             return db
         except Exception as e:
-            print(f"Database initialization failed: {e}")
+            logger.error(f"Database initialization failed: {e}")
             retries += 1
-            print(f"Retrying in {retry_interval} seconds...")
+            logger.warning(f"Retrying in {retry_interval} seconds... (Attempt {retries}/{max_retries})")
             time.sleep(retry_interval)
     
     raise Exception(f"Failed to initialize database after {max_retries} attempts")
@@ -41,14 +67,21 @@ def initialize_database(max_retries=5, retry_interval=3):
 try:
     db = initialize_database()
 except Exception as e:
-    print(f"CRITICAL ERROR: Database initialization failed: {e}")
-    print("Bot will continue without database functionality.")
+    logger.critical(f"Database initialization failed: {e}")
+    logger.warning("Bot will continue without database functionality.")
     db = None
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} ({bot.user.id})')
-    print(f'Connected to {len(bot.guilds)} servers')
+    # Log connection details
+    logger.info(f"Logged in as {bot.user.name} ({bot.user.id})")
+    logger.info(f"Connected to {len(bot.guilds)} servers:")
+    for guild in bot.guilds:
+        logger.info(f"  - {guild.name} (ID: {guild.id}, Members: {len(guild.members)})")
+    
+    # Test environment info
+    if 'PR_NUMBER' in os.environ:
+        logger.info(f"Running in TEST environment for PR #{os.getenv('PR_NUMBER')}: {os.getenv('PR_TITLE', '')}")
 
 # Handle listening to all incoming messages
 @bot.event
@@ -60,7 +93,7 @@ async def on_message(message: discord.Message):
     urls = extractor.find_urls(message.content, True, True, False, True)
     
     if len(urls) > 0:
-        print('URL detected..')
+        logger.debug(f'URL detected in message from {message.author.name}')
         #to support testing and the off-chance DM to BangaBot
         if isinstance(message.channel,discord.DMChannel):
             channel_name = 'DM with ' + message.channel.me.name
@@ -72,12 +105,17 @@ async def on_message(message: discord.Message):
         jump_url = message.jump_url
 
         for url in urls:
+            # Skip database operations if db initialization failed
+            if db is None:
+                logger.warning("Skipping URL processing - database not available")
+                break
+                
             matched_links = db.query(Link) \
                 .filter(Link.url == str(url)) \
                 .all()
             
             if len(matched_links) > 0:
-                print("URL matched.")
+                logger.info(f"URL matched: {url[:50]}...")
                 # should never be > 1
                 matched_link : Link = matched_links[0]
 
@@ -91,7 +129,7 @@ async def on_message(message: discord.Message):
                 for e in excluded_urls:
                     if e in matched_link.url:
                         exclusion_found = True
-                        print("Matched url (aka loan) skipped due to exception!")
+                        logger.debug(f"Matched url skipped due to exception: {e}")
 
                 if exclusion_found:
                     break
@@ -104,21 +142,40 @@ async def on_message(message: discord.Message):
                     + matched_link.jump_url
                 await message.channel.send(file=discord.File('src/img/repostBANT.png'))
                 await message.channel.send(repost_details)
+                logger.info(f"Repost detected from {user} - URL previously posted by {matched_link.user}")
             else:
                 link = Link(url, user, channel_name, datetime, jump_url)
                 db.add(link)
                 db.commit()
-                print("URL saved")
+                logger.debug(f"New URL saved: {url[:50]}... by {user}")
 
-        print(user, channel_name, datetime, jump_url)
+        logger.debug(f"Message details: {user}, {channel_name}, {datetime}, {jump_url}")
 
     if 'big oof' in message.content.lower():
         await message.channel.send(file=discord.File('src/img/OOF.png'))
+        logger.debug(f"'Big oof' detected from {message.author.name}")
 
     # Explicit commands will not work without the following
     await bot.process_commands(message)
 
-bot.load_extension('cogs.general')
-bot.load_extension('cogs.cod')
-bot.load_extension('cogs.pubg')
+# Add error handling for commands
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        logger.debug(f"Command not found: {ctx.message.content}")
+        return
+        
+    logger.error(f"Command error: {error} (Command: {ctx.command})")
+    await ctx.send(f"Error executing command: {error}")
+
+# Load extensions with error handling
+for extension in ['cogs.general', 'cogs.cod', 'cogs.pubg']:
+    try:
+        bot.load_extension(extension)
+        logger.info(f"Loaded extension: {extension}")
+    except Exception as e:
+        logger.error(f"Failed to load extension {extension}: {e}")
+
+# Log that we're starting the bot
+logger.info("Starting BangaBot...")
 bot.run(os.getenv('TOKEN'))

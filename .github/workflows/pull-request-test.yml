@@ -338,7 +338,6 @@ jobs:
                 'Your PR test bot is now running on the test server and will remain active throughout the PR lifecycle.\n\n' +
                 '**PR Info:**\n' +
                 `- PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}\n` +
-                `- Test Bot is using Discord Token: \`${{ secrets.TEST_DISCORD_TOKEN }}\`\n\n` +
                 '**Containers:**\n' +
                 `- Bot: \`bangabot_pr${{ github.event.pull_request.number }}\`\n` +
                 `- Database: \`bangabot_db_pr${{ github.event.pull_request.number }}\`\n\n` +
@@ -347,6 +346,7 @@ jobs:
                 '```\n' +
                 `sudo docker compose -f ~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml logs -f\n` +
                 '```\n\n' +
+                '> **Note:** In the logs, messages prefixed with `err:` are not actually errors but normal status messages from Docker Compose that get directed to stderr instead of stdout.\n\n' +
                 'The test bot will remain active until this PR is closed. Updates to this PR will automatically redeploy the test environment.'
             })
 
