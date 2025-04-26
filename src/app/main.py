@@ -35,9 +35,14 @@ def setup_logging():
 # Initialize logger
 logger = setup_logging()
 
-#init
-bot = discord.Client()
-bot = commands.Bot(command_prefix='!')
+# Setup proper intents for the bot
+intents = discord.Intents.default()
+intents.message_content = True  # Enable message content intent
+intents.guilds = True            # For server info
+intents.messages = True          # For message events
+
+# Initialize bot with proper intents
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Initialize database with retry logic
 def initialize_database(max_retries=5, retry_interval=3):
