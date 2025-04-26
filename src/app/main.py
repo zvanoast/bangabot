@@ -38,8 +38,8 @@ logger = setup_logging()
 # Setup proper intents for the bot
 intents = discord.Intents.default()
 intents.message_content = True  # Enable message content intent
-intents.guilds = True            # For server info
-intents.messages = True          # For message events
+intents.guilds = True           # For server info
+intents.members = True          # For member details
 
 # Initialize bot with proper intents
 bot = commands.Bot(command_prefix='!', intents=intents)
