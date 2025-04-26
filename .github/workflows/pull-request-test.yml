@@ -1,0 +1,184 @@
+name: Pull Request Test
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    name: Test Application
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.9
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+          pip install -r src/app/requirements.txt
+      
+      - name: Lint with flake8
+        run: |
+          # Only check for critical errors
+          flake8 src/app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 src/app/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  build:
+    name: Build Docker Image
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Build and export Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./src/app
+          load: true
+          tags: bangabot:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Test Docker image
+        run: |
+          docker images
+          docker image inspect bangabot:${{ github.sha }}
+  
+  test-environment:
+    name: Deploy Test Environment
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Create test .env file
+        run: |
+          echo "TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" > .env.test
+          echo "CODUSER=${{ secrets.CODUSER }}" >> .env.test
+          echo "CODPASS=${{ secrets.CODPASS }}" >> .env.test
+          echo "DBUSER=postgres" >> .env.test
+          echo "DBPASS=test-password" >> .env.test
+          echo "DBNAME=bangabot_test" >> .env.test
+          echo "DBPORT=5432" >> .env.test
+          echo "DBHOST=db" >> .env.test
+      
+      - name: Set up Docker Compose
+        run: |
+          cat > docker-compose.test.yml << EOL
+          version: '3'
+          services:
+            app:
+              build:
+                context: ./src/app
+                dockerfile: Dockerfile
+              environment:
+                DBHOST: db
+                DBPORT: 5432
+              env_file:
+                - .env.test
+              depends_on:
+                db:
+                  condition: service_healthy
+            db:
+              image: postgres
+              environment:
+                POSTGRES_USER: postgres
+                POSTGRES_PASSWORD: test-password
+                POSTGRES_DB: bangabot_test
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U postgres"]
+                interval: 5s
+                timeout: 5s
+                retries: 5
+              volumes:
+                - test-db-data:/var/lib/postgresql/data
+          volumes:
+            test-db-data:
+          EOL
+      
+      - name: Start test environment
+        run: |
+          docker-compose -f docker-compose.test.yml up -d
+      
+      - name: Wait for containers to start
+        run: sleep 20
+      
+      - name: Check container status
+        run: |
+          docker-compose -f docker-compose.test.yml ps
+          if [ $(docker-compose -f docker-compose.test.yml ps --services --filter "status=running" | wc -l) -ne 2 ]; then
+            echo "Not all containers are running"
+            docker-compose -f docker-compose.test.yml logs
+            exit 1
+          fi
+      
+      - name: Verify database connectivity
+        run: |
+          docker-compose -f docker-compose.test.yml exec -T db pg_isready -U postgres
+      
+      - name: Check application logs
+        run: |
+          docker-compose -f docker-compose.test.yml logs app
+      
+      - name: Clean up test environment
+        run: |
+          docker-compose -f docker-compose.test.yml down -v
+        if: always() # Run even if previous steps fail
+
+  comment-pr:
+    name: Comment on PR
+    needs: [test, build, test-environment]
+    runs-on: ubuntu-latest
+    if: always() # Run even if previous jobs fail
+    
+    steps:
+      - name: Check job status
+        id: check_status
+        run: |
+          if [ "${{ needs.test.result }}" == "success" ] && [ "${{ needs.build.result }}" == "success" ] && [ "${{ needs.test-environment.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Comment on PR success
+        if: steps.check_status.outputs.status == 'success'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ **Test environment deployment successful!**\n\nAll tests passed. The bot has been successfully built and tested in an isolated environment.'
+            })
+      
+      - name: Comment on PR failure
+        if: steps.check_status.outputs.status == 'failure'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ **Test environment deployment failed!**\n\nSome tests have failed. Please check the GitHub Actions logs for more details.'
+            })
