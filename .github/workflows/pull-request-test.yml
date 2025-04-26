@@ -15,18 +15,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
       - name: Set up Python 3.9
         uses: actions/setup-python@v3
         with:
           python-version: 3.9
-      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install flake8
           pip install -r src/app/requirements.txt
-      
       - name: Lint with flake8
         run: |
           # Only check for critical errors
@@ -42,10 +39,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      
       - name: Build and export Docker image
         uses: docker/build-push-action@v4
         with:
@@ -54,7 +49,6 @@ jobs:
           tags: bangabot:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
       - name: Test Docker image
         run: |
           docker images
@@ -155,7 +149,7 @@ jobs:
             mkdir -p ~/bangabot_test
             
             echo "Docker and Docker Compose setup complete!"
-  
+
   deploy-to-test-server:
     name: Deploy to Test Server
     needs: setup-test-server
@@ -181,11 +175,12 @@ jobs:
           echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> .env.test
           echo "PR_TITLE=${{ github.event.pull_request.title }}" >> .env.test
           echo "PR_URL=${{ github.event.pull_request.html_url }}" >> .env.test
+          
+          cat .env.test # Debug output to verify file content
       
       - name: Create PR-specific docker compose file
         run: |
           cat > docker-compose.pr${{ github.event.pull_request.number }}.yml << EOL
-          version: '3'
           services:
             bangabot_pr${{ github.event.pull_request.number }}:
               build:
@@ -195,7 +190,7 @@ jobs:
                 DBHOST: db
                 DBPORT: 5432
               env_file:
-                - .env.test
+                - .env
               volumes:
                 - ./src/img:/app/src/img
               depends_on:
@@ -231,6 +226,8 @@ jobs:
             pr${{ github.event.pull_request.number }}_db_data:
               name: bangabot_pr${{ github.event.pull_request.number }}_data
           EOL
+          
+          cat docker-compose.pr${{ github.event.pull_request.number }}.yml # Debug output
       
       - name: Prepare SSH key for deployment
         run: |
@@ -242,15 +239,39 @@ jobs:
         run: |
           ssh -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }} "mkdir -p ~/bangabot_test/pr${{ github.event.pull_request.number }}/src/img"
       
-      - name: Transfer files to test server
-        uses: appleboy/scp-action@v0.1.4
+      - name: Debug file listing
+        run: |
+          ls -la
+          ls -la src/app/
+      
+      - name: Upload files directly via SSH
+        run: |
+          # First, upload the .env and docker-compose files
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no .env.test ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/.env.test
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no docker-compose.pr${{ github.event.pull_request.number }}.yml ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml
+          
+          # Then, create the app directory and upload files
+          ssh -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }} "mkdir -p ~/bangabot_test/pr${{ github.event.pull_request.number }}/src/app"
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no src/app/Dockerfile ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/src/app/
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no src/app/main.py ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/src/app/
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no src/app/requirements.txt ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/src/app/
+          
+          # Copy directories recursively
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no -r src/app/cogs ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/src/app/
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no -r src/app/database ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/src/app/
+          scp -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no -r src/img ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }}:~/bangabot_test/pr${{ github.event.pull_request.number }}/src/
+      
+      - name: Verify files on test server
+        uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.TEST_SERVER_HOST }}
           username: ${{ secrets.TEST_SERVER_USER }}
           key: ${{ secrets.TEST_SERVER_SSH_KEY }}
-          source: ".env.test,docker-compose.pr${{ github.event.pull_request.number }}.yml,src/app/Dockerfile,src/app/main.py,src/app/requirements.txt,src/app/cogs/,src/app/database/,src/img/"
-          target: "~/bangabot_test/pr${{ github.event.pull_request.number }}"
-          strip_components: 0
+          script: |
+            echo "Verifying files on test server:"
+            ls -la ~/bangabot_test/pr${{ github.event.pull_request.number }}/
+            ls -la ~/bangabot_test/pr${{ github.event.pull_request.number }}/src/app/
+            cat ~/bangabot_test/pr${{ github.event.pull_request.number }}/.env.test | grep -v "TOKEN\|PASS" # Hide sensitive info
       
       - name: Start PR environment
         uses: appleboy/ssh-action@v1.0.0
@@ -268,7 +289,7 @@ jobs:
             
             # This may be needed if server was just rebooted or Docker service just started
             # Ensure we can connect to Docker
-            timeout 30 sh -c 'until docker ps; do sleep 1; done'
+            timeout 30 sh -c 'until sudo docker ps; do sleep 1; done'
             
             # Stop any existing containers for this PR
             if sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps | grep -q "bangabot"; then
@@ -331,7 +352,7 @@ jobs:
               sudo docker compose -f ~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml logs -f
               \`\`\`
               
-              The test bot will remain active until this PR is closed. Updates to this PR will automatically redeploy the test environment.`
+              The test bot will remain active until this PR is closed. Updates to this PR will automatically redeploy the test environment.`}
             })
 
   cleanup:
