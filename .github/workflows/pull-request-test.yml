@@ -1,9 +1,11 @@
-name: Pull Request Test
+name: Pull Request Test Environment
 
 on:
   pull_request:
     branches:
       - master
+    types: [opened, synchronize, reopened]
+  workflow_dispatch: # Allow manual triggering
 
 jobs:
   test:
@@ -58,32 +60,38 @@ jobs:
           docker images
           docker image inspect bangabot:${{ github.sha }}
   
-  test-environment:
-    name: Deploy Test Environment
+  deploy-to-test-server:
+    name: Deploy to Test Server
     needs: build
     runs-on: ubuntu-latest
+    environment: Test
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Create test .env file
+      - name: Create PR-specific .env file
         run: |
           echo "TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" > .env.test
           echo "CODUSER=${{ secrets.CODUSER }}" >> .env.test
           echo "CODPASS=${{ secrets.CODPASS }}" >> .env.test
-          echo "DBUSER=postgres" >> .env.test
-          echo "DBPASS=test-password" >> .env.test
-          echo "DBNAME=bangabot_test" >> .env.test
+          echo "DBUSER=${{ secrets.TEST_DBUSER }}" >> .env.test
+          echo "DBPASS=${{ secrets.TEST_DBPASS }}" >> .env.test
+          echo "DBNAME=bangabot_pr_${{ github.event.pull_request.number }}" >> .env.test
           echo "DBPORT=5432" >> .env.test
           echo "DBHOST=db" >> .env.test
+          
+          # Add PR identifier to .env file for reference
+          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> .env.test
+          echo "PR_TITLE=${{ github.event.pull_request.title }}" >> .env.test
+          echo "PR_URL=${{ github.event.pull_request.html_url }}" >> .env.test
       
-      - name: Set up Docker Compose
+      - name: Create PR-specific docker compose file
         run: |
-          cat > docker-compose.test.yml << EOL
+          cat > docker-compose.pr${{ github.event.pull_request.number }}.yml << EOL
           version: '3'
           services:
-            app:
+            bangabot_pr${{ github.event.pull_request.number }}:
               build:
                 context: ./src/app
                 dockerfile: Dockerfile
@@ -92,73 +100,173 @@ jobs:
                 DBPORT: 5432
               env_file:
                 - .env.test
+              volumes:
+                - ./src/img:/app/src/img
               depends_on:
                 db:
                   condition: service_healthy
+              restart: unless-stopped
+              container_name: bangabot_pr${{ github.event.pull_request.number }}
+              networks:
+                - bangabot_network
+            
             db:
               image: postgres
               environment:
-                POSTGRES_USER: postgres
-                POSTGRES_PASSWORD: test-password
-                POSTGRES_DB: bangabot_test
+                POSTGRES_USER: \${DBUSER}
+                POSTGRES_PASSWORD: \${DBPASS}
+                POSTGRES_DB: bangabot_pr_${{ github.event.pull_request.number }}
               healthcheck:
-                test: ["CMD-SHELL", "pg_isready -U postgres"]
+                test: ["CMD-SHELL", "pg_isready -U \${DBUSER}"]
                 interval: 5s
                 timeout: 5s
                 retries: 5
               volumes:
-                - test-db-data:/var/lib/postgresql/data
+                - pr${{ github.event.pull_request.number }}_db_data:/var/lib/postgresql/data
+              container_name: bangabot_db_pr${{ github.event.pull_request.number }}
+              networks:
+                - bangabot_network
+          
+          networks:
+            bangabot_network:
+              name: bangabot_network
+          
           volumes:
-            test-db-data:
+            pr${{ github.event.pull_request.number }}_db_data:
+              name: bangabot_pr${{ github.event.pull_request.number }}_data
           EOL
       
-      - name: Start test environment
-        run: |
-          docker compose -f docker-compose.test.yml up -d
+      - name: Deploy to test server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 120s
+          script_stop: true
+          script: |
+            # Create deployment directory for this PR if it doesn't exist
+            mkdir -p ~/bangabot_test/pr${{ github.event.pull_request.number }}
+            mkdir -p ~/bangabot_test/pr${{ github.event.pull_request.number }}/src/img
+            
+            echo "Created directory structure for PR #${{ github.event.pull_request.number }}"
       
-      - name: Wait for containers to start
-        run: sleep 20
+      - name: Transfer files to test server
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          source: ".env.test,docker-compose.pr${{ github.event.pull_request.number }}.yml,src/app/Dockerfile,src/app/main.py,src/app/requirements.txt,src/app/cogs/,src/app/database/,src/img/"
+          target: "~/bangabot_test/pr${{ github.event.pull_request.number }}"
+          strip_components: 0
       
-      - name: Check container status
-        run: |
-          docker compose -f docker-compose.test.yml ps
-          if [ $(docker compose -f docker-compose.test.yml ps --services --filter "status=running" | wc -l) -ne 2 ]; then
-            echo "Not all containers are running"
-            docker compose -f docker-compose.test.yml logs
-            exit 1
-          fi
+      - name: Start PR environment
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 120s
+          script: |
+            cd ~/bangabot_test/pr${{ github.event.pull_request.number }}
+            
+            # Rename the .env.test file to .env
+            mv .env.test .env
+            
+            # Stop any existing containers for this PR
+            if docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps | grep -q "bangabot"; then
+              echo "Stopping existing PR environment..."
+              docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml down
+            fi
+            
+            # Build and start the PR environment
+            echo "Starting PR environment..."
+            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml up -d --build
+            
+            # Verify containers are running
+            sleep 15
+            if [ $(docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps | grep "Up" | wc -l) -lt 2 ]; then
+              echo "Not all containers are running"
+              docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml logs
+              exit 1
+            fi
+            
+            echo "PR #${{ github.event.pull_request.number }} environment is now running"
       
-      - name: Verify database connectivity
-        run: |
-          docker compose -f docker-compose.test.yml exec -T db pg_isready -U postgres
+      - name: Verify test environment
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          script: |
+            cd ~/bangabot_test/pr${{ github.event.pull_request.number }}
+            echo "Container status:"
+            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps
+            
+            echo "Application logs:"
+            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml logs --tail=50 bangabot_pr${{ github.event.pull_request.number }}
       
-      - name: Check application logs
-        run: |
-          docker compose -f docker-compose.test.yml logs app
-      
-      - name: Clean up test environment
-        run: |
-          docker compose -f docker-compose.test.yml down -v
-        if: always() # Run even if previous steps fail
+      - name: Post deployment details to PR
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `✅ **Test environment deployed successfully!**
+              
+              Your PR test bot is now running on the test server and will remain active throughout the PR lifecycle.
+              
+              **PR Info:**
+              - PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
+              - Test Bot is using Discord Token: \`${{ secrets.TEST_DISCORD_TOKEN }}\`
+              
+              **Containers:**
+              - Bot: \`bangabot_pr${{ github.event.pull_request.number }}\`
+              - Database: \`bangabot_db_pr${{ github.event.pull_request.number }}\`
+              
+              **Access:**
+              You can check logs by connecting to the test server and running:
+              \`\`\`
+              docker compose -f ~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml logs -f
+              \`\`\`
+              
+              The test bot will remain active until this PR is closed. Updates to this PR will automatically redeploy the test environment.`
+            })
 
-  comment-pr:
-    name: Comment on PR
-    needs: [test, build, test-environment]
+  cleanup:
+    name: Cleanup on PR Close
     runs-on: ubuntu-latest
-    if: always() # Run even if previous jobs fail
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
     
     steps:
-      - name: Check job status
-        id: check_status
-        run: |
-          if [ "${{ needs.test.result }}" == "success" ] && [ "${{ needs.build.result }}" == "success" ] && [ "${{ needs.test-environment.result }}" == "success" ]; then
-            echo "status=success" >> $GITHUB_OUTPUT
-          else
-            echo "status=failure" >> $GITHUB_OUTPUT
-          fi
+      - name: Cleanup test environment
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          script: |
+            cd ~/bangabot_test/pr${{ github.event.pull_request.number }}
+            
+            # Stop and remove containers
+            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml down -v
+            
+            # Remove PR-specific volume
+            docker volume rm bangabot_pr${{ github.event.pull_request.number }}_data || true
+            
+            # Clean up files
+            cd ~ && rm -rf ~/bangabot_test/pr${{ github.event.pull_request.number }}
+            
+            echo "Test environment for PR #${{ github.event.pull_request.number }} has been cleaned up"
       
-      - name: Comment on PR success
-        if: steps.check_status.outputs.status == 'success'
+      - name: Post cleanup notice to PR
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -167,18 +275,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '✅ **Test environment deployment successful!**\n\nAll tests passed. The bot has been successfully built and tested in an isolated environment.'
-            })
-      
-      - name: Comment on PR failure
-        if: steps.check_status.outputs.status == 'failure'
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '❌ **Test environment deployment failed!**\n\nSome tests have failed. Please check the GitHub Actions logs for more details.'
+              body: '🧹 **Test environment has been cleaned up.**\n\nAll containers, volumes, and files related to this PR have been removed from the test server.'
             })
