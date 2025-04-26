@@ -114,31 +114,31 @@ jobs:
       
       - name: Start test environment
         run: |
-          docker-compose -f docker-compose.test.yml up -d
+          docker compose -f docker-compose.test.yml up -d
       
       - name: Wait for containers to start
         run: sleep 20
       
       - name: Check container status
         run: |
-          docker-compose -f docker-compose.test.yml ps
-          if [ $(docker-compose -f docker-compose.test.yml ps --services --filter "status=running" | wc -l) -ne 2 ]; then
+          docker compose -f docker-compose.test.yml ps
+          if [ $(docker compose -f docker-compose.test.yml ps --services --filter "status=running" | wc -l) -ne 2 ]; then
             echo "Not all containers are running"
-            docker-compose -f docker-compose.test.yml logs
+            docker compose -f docker-compose.test.yml logs
             exit 1
           fi
       
       - name: Verify database connectivity
         run: |
-          docker-compose -f docker-compose.test.yml exec -T db pg_isready -U postgres
+          docker compose -f docker-compose.test.yml exec -T db pg_isready -U postgres
       
       - name: Check application logs
         run: |
-          docker-compose -f docker-compose.test.yml logs app
+          docker compose -f docker-compose.test.yml logs app
       
       - name: Clean up test environment
         run: |
-          docker-compose -f docker-compose.test.yml down -v
+          docker compose -f docker-compose.test.yml down -v
         if: always() # Run even if previous steps fail
 
   comment-pr:
