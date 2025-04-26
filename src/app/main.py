@@ -1,5 +1,6 @@
 import discord
 import os
+import time
 from pytz import timezone
 from urlextract import URLExtract
 from discord.ext import commands
@@ -12,18 +13,42 @@ from database.orm import Link, LinkExclusion, StartupHistory
 bot = discord.Client()
 bot = commands.Bot(command_prefix='!')
 
-#init DB
-Base.metadata.create_all(engine)
-db = Session()
+# Initialize database with retry logic
+def initialize_database(max_retries=5, retry_interval=3):
+    retries = 0
+    while retries < max_retries:
+        try:
+            # Create tables
+            Base.metadata.create_all(engine)
+            db = Session()
+            
+            # Log startup history
+            history = StartupHistory(datetime.now())
+            db.add(history)
+            db.commit()
+            
+            print("Database initialized successfully!")
+            return db
+        except Exception as e:
+            print(f"Database initialization failed: {e}")
+            retries += 1
+            print(f"Retrying in {retry_interval} seconds...")
+            time.sleep(retry_interval)
+    
+    raise Exception(f"Failed to initialize database after {max_retries} attempts")
 
-#log startup history
-history = StartupHistory(datetime.now())
-db.add(history)
-db.commit()
+# Try to initialize database but don't crash the bot if it fails
+try:
+    db = initialize_database()
+except Exception as e:
+    print(f"CRITICAL ERROR: Database initialization failed: {e}")
+    print("Bot will continue without database functionality.")
+    db = None
 
 @bot.event
 async def on_ready():
-    print('Logged in as {0.user}'.format(bot))
+    print(f'Logged in as {bot.user.name} ({bot.user.id})')
+    print(f'Connected to {len(bot.guilds)} servers')
 
 # Handle listening to all incoming messages
 @bot.event

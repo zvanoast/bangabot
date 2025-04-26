@@ -3,39 +3,33 @@ services:
   app:
     environment:
       DBHOST: db
-    #   - DBUSER=${DBUSER}
-    #   - DBPASS=${DBPASS}
-    #   - DBNAME=${DBNAME}
-    #   - DBPORT=5434
+      DBPORT: 5432
     env_file:
       - .env
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - 8000:8000
+    volumes:
+      - ../img:/app/src/img
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
   db:
     image: postgres
     environment:
-      PGHOST: db
       POSTGRES_USER: ${DBUSER}
       POSTGRES_PASSWORD: ${DBPASS}
       POSTGRES_DB: ${DBNAME}
-      PGPORT: ${DBPORT}
-      #this ENV variable is only required for the healthcheck section - if you don't specify it, the check command will fail stating the root user doesn't exist in posgres
-      PGUSER: ${DBUSER}
     healthcheck:
-      #this command checks if the database is ready, right on the source db server
-      test: [ "CMD-SHELL", "pg_isready" ]
+      test: ["CMD-SHELL", "pg_isready -U ${DBUSER}"]
       interval: 5s
       timeout: 5s
       retries: 5
     ports:
-      - 5433:${DBPORT}
+      - 5432:5432
     volumes:
-    - db-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql/data
+    restart: unless-stopped
 volumes:
   db-data:

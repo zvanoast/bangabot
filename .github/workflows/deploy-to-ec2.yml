@@ -1,29 +1,192 @@
 name: Deploy to EC2
 
 on:
-    push:
-        branches:
-            - master
+  push:
+    branches:
+      - master
+  workflow_dispatch:  # Allows manual triggering
 
 jobs:
-    deploy:
-        name: Deploy to EC2 on push to main branch
-        runs-on: ubuntu-latest
-        environment: Production
+  test:
+    name: Test Application
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.9
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8to
+          pip install -r src/app/requirements.txt
+      
+      - name: Lint with flake8
+        run: |
+          # Only check for critical errors
+          flake8 src/app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 src/app/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-        steps:
-           - name: Checkout code
-             uses: actions/checkout@v2
-           - name: Set up Python
-             uses: actions/setup-python@v2
-             with:
-              python-version: 3.x
-           - name: Install dependencies
-             run: pip install -r src/app/requirements.txt
-           - name: Deployment thing
-             uses: easingthemes/ssh-deploy@main
-             env:
-              SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-              REMOTE_HOST: ${{ secrets.EC2_REMOTE_HOST }}
-              REMOTE_USER: ${{ secrets.EC2_REMOTE_USER }}
-              TARGET: ${{ secrets.EC2_TARGET }}
+  build:
+    name: Build Docker Image
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Build and export Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./src/app
+          load: true
+          tags: bangabot:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Test Docker image
+        run: |
+          docker images
+          docker image inspect bangabot:latest
+
+  deploy:
+    name: Deploy to EC2
+    needs: build
+    runs-on: ubuntu-latest
+    environment: Production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Create .env file for EC2
+        run: |
+          echo "TOKEN=${{ secrets.DISCORD_TOKEN }}" > .env
+          echo "CODUSER=${{ secrets.CODUSER }}" >> .env
+          echo "CODPASS=${{ secrets.CODPASS }}" >> .env
+          echo "DBUSER=${{ secrets.DBUSER }}" >> .env
+          echo "DBPASS=${{ secrets.DBPASS }}" >> .env
+          echo "DBNAME=${{ secrets.DBNAME }}" >> .env
+          echo "DBPORT=5432" >> .env
+          echo "DBHOST=db" >> .env
+      
+      - name: Create docker-compose.prod.yml
+        run: |
+          cat > docker-compose.prod.yml << EOL
+          version: '3'
+          services:
+            app:
+              build:
+                context: .
+                dockerfile: Dockerfile
+              environment:
+                DBHOST: db
+                DBPORT: 5432
+              env_file:
+                - .env
+              volumes:
+                - ./img:/app/src/img
+              depends_on:
+                db:
+                  condition: service_healthy
+              restart: unless-stopped
+            db:
+              image: postgres
+              environment:
+                POSTGRES_USER: \${DBUSER}
+                POSTGRES_PASSWORD: \${DBPASS}
+                POSTGRES_DB: \${DBNAME}
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U \${DBUSER}"]
+                interval: 5s
+                timeout: 5s
+                retries: 5
+              ports:
+                - 5432:5432
+              volumes:
+                - db-data:/var/lib/postgresql/data
+              restart: unless-stopped
+          volumes:
+            db-data:
+          EOL
+      
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_REMOTE_HOST }}
+          username: ${{ secrets.EC2_REMOTE_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            # Create deployment directory if it doesn't exist
+            mkdir -p ~/bangabot/src
+            
+            # Install Docker if not installed
+            if ! [ -x "$(command -v docker)" ]; then
+              echo 'Installing Docker...' 
+              sudo apt-get update
+              sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+              sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/$(lsb_release -cs) stable"
+              sudo apt-get update
+              sudo apt-get install -y docker-ce
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo usermod -aG docker $USER
+            fi
+            
+            # Install docker-compose if not installed
+            if ! [ -x "$(command -v docker-compose)" ]; then
+              echo 'Installing docker-compose...'
+              sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+            
+            # Stop any existing containers
+            cd ~/bangabot
+            if [ -f docker-compose.prod.yml ]; then
+              docker-compose -f docker-compose.prod.yml down
+            fi
+            
+            # Remove old Docker images to free up space
+            docker system prune -f
+      
+      - name: Transfer files to EC2
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.EC2_REMOTE_HOST }}
+          username: ${{ secrets.EC2_REMOTE_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          source: ".env,docker-compose.prod.yml,src/app/Dockerfile,src/app/main.py,src/app/requirements.txt,src/app/cogs/,src/app/database/,src/img/"
+          target: "~/bangabot"
+          strip_components: 0
+      
+      - name: Start application on EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_REMOTE_HOST }}
+          username: ${{ secrets.EC2_REMOTE_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/bangabot
+            
+            # Build and start containers
+            docker-compose -f docker-compose.prod.yml up -d --build
+            
+            # Verify containers are running
+            sleep 15
+            if [ $(docker-compose -f docker-compose.prod.yml ps | grep "Up" | wc -l) -lt 2 ]; then
+              echo "Containers failed to start properly"
+              docker-compose -f docker-compose.prod.yml logs
+              exit 1
+            fi
+            echo "Deployment successful!"
