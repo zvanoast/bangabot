@@ -60,9 +60,105 @@ jobs:
           docker images
           docker image inspect bangabot:${{ github.sha }}
   
+  test-ssh-connection:
+    name: Test SSH Connection
+    needs: build
+    runs-on: ubuntu-latest
+    environment: Test
+    
+    steps:
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TEST_SERVER_SSH_KEY }}" > ~/.ssh/test_server_key
+          chmod 600 ~/.ssh/test_server_key
+          
+          # Extract and print public key part (safe to show)
+          ssh-keygen -y -f ~/.ssh/test_server_key > ~/.ssh/test_server_key.pub || echo "Failed to extract public key - check key format"
+          echo "Public key fingerprint:"
+          ssh-keygen -l -f ~/.ssh/test_server_key || echo "Failed to get fingerprint"
+      
+      - name: Test SSH Connection
+        run: |
+          echo "Testing connection to ${{ secrets.TEST_SERVER_HOST }} as user ${{ secrets.TEST_SERVER_USER }}..."
+          ssh -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no -o BatchMode=yes ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }} "echo SSH connection successful && id && echo 'Current directory:' && pwd" || echo "SSH connection failed, check logs above"
+  
+  setup-test-server:
+    name: Setup Test Server
+    needs: test-ssh-connection
+    runs-on: ubuntu-latest
+    environment: Test
+    
+    steps:
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TEST_SERVER_SSH_KEY }}" > ~/.ssh/test_server_key
+          chmod 600 ~/.ssh/test_server_key
+      
+      - name: Install Docker and Docker Compose
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          timeout: 180s
+          script: |
+            echo "Installing Docker if not already installed..."
+            
+            # Check if Docker is already installed
+            if ! command -v docker &> /dev/null; then
+              echo "Docker not found, installing..."
+              # Update package list
+              sudo apt-get update
+              
+              # Install prerequisites
+              sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+              
+              # Add Docker's official GPG key
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+              
+              # Set up the Docker repository
+              sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+              
+              # Install Docker CE
+              sudo apt-get update
+              sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+              
+              # Add the current user to the Docker group
+              sudo usermod -aG docker $USER
+              
+              echo "Docker installed successfully!"
+            else
+              echo "Docker is already installed: $(docker --version)"
+            fi
+            
+            # Install Docker Compose if not already installed
+            if ! command -v docker compose &> /dev/null; then
+              echo "Docker Compose not found, installing Docker Compose plugin..."
+              
+              # Install the compose plugin
+              sudo apt-get update
+              sudo apt-get install -y docker-compose-plugin
+              
+              # Test if the plugin installed correctly
+              docker compose version
+            else
+              echo "Docker Compose is already installed: $(docker compose version)"
+            fi
+            
+            # Ensure the Docker service is started
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            
+            # Create the main directory for PR testing
+            mkdir -p ~/bangabot_test
+            
+            echo "Docker and Docker Compose setup complete!"
+  
   deploy-to-test-server:
     name: Deploy to Test Server
-    needs: build
+    needs: setup-test-server
     runs-on: ubuntu-latest
     environment: Test
     
@@ -75,8 +171,8 @@ jobs:
           echo "TOKEN=${{ secrets.TEST_DISCORD_TOKEN }}" > .env.test
           echo "CODUSER=${{ secrets.CODUSER }}" >> .env.test
           echo "CODPASS=${{ secrets.CODPASS }}" >> .env.test
-          echo "DBUSER=${{ secrets.TEST_DBUSER }}" >> .env.test
-          echo "DBPASS=${{ secrets.TEST_DBPASS }}" >> .env.test
+          echo "DBUSER=${{ secrets.TEST_DBUSER || 'postgres' }}" >> .env.test
+          echo "DBPASS=${{ secrets.TEST_DBPASS || 'postgres' }}" >> .env.test
           echo "DBNAME=bangabot_pr_${{ github.event.pull_request.number }}" >> .env.test
           echo "DBPORT=5432" >> .env.test
           echo "DBHOST=db" >> .env.test
@@ -136,21 +232,15 @@ jobs:
               name: bangabot_pr${{ github.event.pull_request.number }}_data
           EOL
       
-      - name: Deploy to test server
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: ${{ secrets.TEST_SERVER_HOST }}
-          username: ${{ secrets.TEST_SERVER_USER }}
-          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
-          timeout: 60s
-          command_timeout: 120s
-          script_stop: true
-          script: |
-            # Create deployment directory for this PR if it doesn't exist
-            mkdir -p ~/bangabot_test/pr${{ github.event.pull_request.number }}
-            mkdir -p ~/bangabot_test/pr${{ github.event.pull_request.number }}/src/img
-            
-            echo "Created directory structure for PR #${{ github.event.pull_request.number }}"
+      - name: Prepare SSH key for deployment
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TEST_SERVER_SSH_KEY }}" > ~/.ssh/test_server_key
+          chmod 600 ~/.ssh/test_server_key
+      
+      - name: Create directory on test server via SSH directly
+        run: |
+          ssh -i ~/.ssh/test_server_key -o StrictHostKeyChecking=no ${{ secrets.TEST_SERVER_USER }}@${{ secrets.TEST_SERVER_HOST }} "mkdir -p ~/bangabot_test/pr${{ github.event.pull_request.number }}/src/img"
       
       - name: Transfer files to test server
         uses: appleboy/scp-action@v0.1.4
@@ -168,29 +258,33 @@ jobs:
           host: ${{ secrets.TEST_SERVER_HOST }}
           username: ${{ secrets.TEST_SERVER_USER }}
           key: ${{ secrets.TEST_SERVER_SSH_KEY }}
-          timeout: 60s
-          command_timeout: 120s
+          timeout: 120s
+          command_timeout: 300s  # Increased for container build time
           script: |
             cd ~/bangabot_test/pr${{ github.event.pull_request.number }}
             
             # Rename the .env.test file to .env
             mv .env.test .env
             
+            # This may be needed if server was just rebooted or Docker service just started
+            # Ensure we can connect to Docker
+            timeout 30 sh -c 'until docker ps; do sleep 1; done'
+            
             # Stop any existing containers for this PR
-            if docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps | grep -q "bangabot"; then
+            if sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps | grep -q "bangabot"; then
               echo "Stopping existing PR environment..."
-              docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml down
+              sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml down
             fi
             
             # Build and start the PR environment
             echo "Starting PR environment..."
-            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml up -d --build
+            sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml up -d --build
             
             # Verify containers are running
-            sleep 15
-            if [ $(docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps | grep "Up" | wc -l) -lt 2 ]; then
+            sleep 20
+            if [ $(sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps | grep "Up" | wc -l) -lt 2 ]; then
               echo "Not all containers are running"
-              docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml logs
+              sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml logs
               exit 1
             fi
             
@@ -205,10 +299,10 @@ jobs:
           script: |
             cd ~/bangabot_test/pr${{ github.event.pull_request.number }}
             echo "Container status:"
-            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps
+            sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml ps
             
             echo "Application logs:"
-            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml logs --tail=50 bangabot_pr${{ github.event.pull_request.number }}
+            sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml logs --tail=50 bangabot_pr${{ github.event.pull_request.number }}
       
       - name: Post deployment details to PR
         uses: actions/github-script@v6
@@ -234,7 +328,7 @@ jobs:
               **Access:**
               You can check logs by connecting to the test server and running:
               \`\`\`
-              docker compose -f ~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml logs -f
+              sudo docker compose -f ~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml logs -f
               \`\`\`
               
               The test bot will remain active until this PR is closed. Updates to this PR will automatically redeploy the test environment.`
@@ -244,6 +338,7 @@ jobs:
     name: Cleanup on PR Close
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    environment: Test
     
     steps:
       - name: Cleanup test environment
@@ -256,10 +351,10 @@ jobs:
             cd ~/bangabot_test/pr${{ github.event.pull_request.number }}
             
             # Stop and remove containers
-            docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml down -v
+            sudo docker compose -f docker-compose.pr${{ github.event.pull_request.number }}.yml down -v
             
             # Remove PR-specific volume
-            docker volume rm bangabot_pr${{ github.event.pull_request.number }}_data || true
+            sudo docker volume rm bangabot_pr${{ github.event.pull_request.number }}_data || true
             
             # Clean up files
             cd ~ && rm -rf ~/bangabot_test/pr${{ github.event.pull_request.number }}
