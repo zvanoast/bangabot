@@ -334,25 +334,20 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `✅ **Test environment deployed successfully!**
-              
-              Your PR test bot is now running on the test server and will remain active throughout the PR lifecycle.
-              
-              **PR Info:**
-              - PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}
-              - Test Bot is using Discord Token: \`${{ secrets.TEST_DISCORD_TOKEN }}\`
-              
-              **Containers:**
-              - Bot: \`bangabot_pr${{ github.event.pull_request.number }}\`
-              - Database: \`bangabot_db_pr${{ github.event.pull_request.number }}\`
-              
-              **Access:**
-              You can check logs by connecting to the test server and running:
-              \`\`\`
-              sudo docker compose -f ~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml logs -f
-              \`\`\`
-              
-              The test bot will remain active until this PR is closed. Updates to this PR will automatically redeploy the test environment.`}
+              body: '✅ **Test environment deployed successfully!**\n\n' +
+                'Your PR test bot is now running on the test server and will remain active throughout the PR lifecycle.\n\n' +
+                '**PR Info:**\n' +
+                `- PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}\n` +
+                `- Test Bot is using Discord Token: \`${{ secrets.TEST_DISCORD_TOKEN }}\`\n\n` +
+                '**Containers:**\n' +
+                `- Bot: \`bangabot_pr${{ github.event.pull_request.number }}\`\n` +
+                `- Database: \`bangabot_db_pr${{ github.event.pull_request.number }}\`\n\n` +
+                '**Access:**\n' +
+                'You can check logs by connecting to the test server and running:\n' +
+                '```\n' +
+                `sudo docker compose -f ~/bangabot_test/pr${{ github.event.pull_request.number }}/docker-compose.pr${{ github.event.pull_request.number }}.yml logs -f\n` +
+                '```\n\n' +
+                'The test bot will remain active until this PR is closed. Updates to this PR will automatically redeploy the test environment.'
             })
 
   cleanup:
