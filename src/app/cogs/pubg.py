@@ -1,5 +1,7 @@
 import random
 from discord.ext import commands
+from discord import app_commands
+import discord
 
 # Guns
 normalGuns = [
@@ -39,11 +41,11 @@ class PUBG(commands.Cog):
         self.bot = bot
 
 
-    @commands.command(
-        brief='Bored of PUBG? Mix it up!',
+    @app_commands.command(
+        name="pubg",
         description='Bored of PUBG? Mix it up!')
-    async def pubg(self, ctx):
-        msg = ctx.author.name + '\'s loadout:\n'
+    async def pubg(self, interaction: discord.Interaction):
+        msg = interaction.user.name + '\'s loadout:\n'
         chosenGuns = []
 
         # 20% chance to override guns
@@ -87,7 +89,7 @@ class PUBG(commands.Cog):
         if len(activeMods) >= 1:
             msg += '\n\nActive mods:\n' +  ' '.join(activeMods)
 
-        await ctx.message.channel.send(msg)
+        await interaction.response.send_message(msg)
 
-def setup(bot):
-    bot.add_cog(PUBG(bot))
+async def setup(bot):
+    await bot.add_cog(PUBG(bot))
