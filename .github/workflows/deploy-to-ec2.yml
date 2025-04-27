@@ -93,9 +93,9 @@ jobs:
                 DBHOST: db
                 DBPORT: 5432
               env_file:
-                - ../.env
+                - .env
               volumes:
-                - ../src/img:/app/src/img
+                - ./src/img:/app/src/img
               depends_on:
                 db:
                   condition: service_healthy
@@ -185,11 +185,19 @@ jobs:
             echo "Src app directory:"
             ls -la src/app/
             
-            # Ensure .env file is in the right location for the updated docker-compose
-            if [ -f ".env" ] && [ ! -f "src/app/.env" ]; then
-              echo "Creating symlink for .env file in src/app directory"
-              ln -sf ../.env src/app/.env
+            # Create a copy of .env in src/app (not just a symlink)
+            if [ -f ".env" ]; then
+              echo "Copying .env file to src/app directory"
+              cp .env src/app/.env
+              echo "Content of .env file (excluding sensitive data):"
+              grep -v "TOKEN\|PASS" .env
+            else
+              echo "ERROR: .env file not found!"
+              exit 1
             fi
+            
+            # Export environment variables for docker-compose
+            export $(grep -v '^#' .env | xargs)
             
             # Build and start containers
             echo "Starting containers with docker-compose..."
