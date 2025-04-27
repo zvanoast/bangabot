@@ -50,12 +50,12 @@ class General(commands.Cog):
 
     @app_commands.command(
         name="gif",
-        description='Show a gif. Current options: dana yeah(y), dana bummed(b), dana thumbsup(tu)')
-    @app_commands.describe(arg="The gif type (y, b, tu)", arg2="Optional additional parameter")
-    async def gif(self, interaction: discord.Interaction, arg: str, arg2: str = None):
+        description='Show a gif. Current options: yeah(y), bummed(b), thumbsup(tu). More to come')
+    @app_commands.describe(arg="The gif type (y, b, tu)")
+    async def gif(self, interaction: discord.Interaction, arg: str):
         if arg == 'y' or arg == 'yeah' or arg == 'yes':
             await interaction.response.send_message(file=discord.File('src/img/danayeah.gif'))
-        elif arg == 'b' or arg == 'bummed' or arg == 'bu':
+        elif arg == 'b' or arg == 'bummed':
             await interaction.response.send_message(file=discord.File('src/img/danabummed.gif'))
         elif arg == 'tu' or arg == 'thumbsup' or arg == 'thumbs up':
             await interaction.response.send_message(file=discord.File('src/img/danathumbsup.gif'))
