@@ -39,7 +39,7 @@ class PUBG(commands.Cog):
         self.bot = bot
 
 
-    @commands.command(
+    @commands.hybrid_command(
         brief='Bored of PUBG? Mix it up!',
         description='Bored of PUBG? Mix it up!')
     async def pubg(self, ctx):
@@ -87,7 +87,7 @@ class PUBG(commands.Cog):
         if len(activeMods) >= 1:
             msg += '\n\nActive mods:\n' +  ' '.join(activeMods)
 
-        await ctx.message.channel.send(msg)
+        await ctx.send(msg)
 
 def setup(bot):
     bot.add_cog(PUBG(bot))

@@ -41,29 +41,29 @@ class General(commands.Cog):
     ]
 
     # Commands
-    @commands.command(
+    @commands.hybrid_command(
         brief='Say hello to BangaBot',
         description='Say hello to BangaBot')
     async def hello(self, ctx):
-        await ctx.message.channel.send(self.determineGreeting())
+        await ctx.send(self.determineGreeting())
 
-    @commands.command(
+    @commands.hybrid_command(
         brief='Show a gif',
         description='Show a gif. Current options: dana yeah(y), dana bummed(b), dana thumbsup(tu)')
-    async def gif(self, ctx, arg, arg2):
+    async def gif(self, ctx, arg: str, arg2: str):
         if arg == 'dana':
             if arg2 == 'yeah' or arg2 == 'y':
-                await ctx.message.channel.send(file=discord.File('src/img/danayeah.gif'))
+                await ctx.send(file=discord.File('src/img/danayeah.gif'))
             if arg2 == 'bummed' or arg2 == 'b':
-                await ctx.message.channel.send(file=discord.File('src/img/danabummed.gif'))
+                await ctx.send(file=discord.File('src/img/danabummed.gif'))
             if arg2 == 'thumbsup' or arg2 == 'tu':
-                await ctx.message.channel.send(file=discord.File('src/img/danathumbsup.gif'))
+                await ctx.send(file=discord.File('src/img/danathumbsup.gif'))
 
-    @commands.command(
+    @commands.hybrid_command(
         brief='Repost.. BANT',
         description='Repost.. BANT')
     async def bant(self, ctx):
-        await ctx.message.channel.send(file=discord.File('src/img/repostBANT.png'))
+        await ctx.send(file=discord.File('src/img/repostBANT.png'))
 
     # Helper functions
     def determineGreeting(self):

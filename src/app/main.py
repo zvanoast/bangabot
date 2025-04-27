@@ -41,8 +41,12 @@ intents.message_content = True  # Enable message content intent
 intents.guilds = True           # For server info
 intents.members = True          # For member details
 
-# Initialize bot with proper intents
-bot = commands.Bot(command_prefix='!', intents=intents)
+# Initialize bot with proper intents and command settings for Discord.py 2.0+
+bot = commands.Bot(
+    command_prefix='!',
+    intents=intents,
+    help_command=None,  # We'll use our own help command if needed
+)
 
 # Initialize database with retry logic
 def initialize_database(max_retries=5, retry_interval=3):
@@ -172,6 +176,23 @@ async def on_command_error(ctx, error):
         
     logger.error(f"Command error: {error} (Command: {ctx.command})")
     await ctx.send(f"Error executing command: {error}")
+
+@bot.command(name='sync')
+@commands.is_owner()
+async def sync(ctx, guild_id: int = None):
+    """Syncs slash commands to a specific guild or globally"""
+    logger.info(f"Syncing slash commands requested by {ctx.author}")
+    
+    if guild_id:
+        guild = discord.Object(id=guild_id)
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+        await ctx.send(f"Synced commands to guild {guild_id}")
+        logger.info(f"Synced commands to guild {guild_id}")
+    else:
+        await bot.tree.sync()
+        await ctx.send("Synced commands globally")
+        logger.info("Synced commands globally")
 
 # Load extensions with error handling
 for extension in ['cogs.general', 'cogs.cod', 'cogs.pubg']:
