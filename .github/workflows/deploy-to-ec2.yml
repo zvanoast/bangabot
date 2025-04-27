@@ -87,15 +87,15 @@ jobs:
           services:
             app:
               build:
-                context: .
+                context: ./src/app
                 dockerfile: Dockerfile
               environment:
                 DBHOST: db
                 DBPORT: 5432
               env_file:
-                - .env
+                - ../.env
               volumes:
-                - ./img:/app/src/img
+                - ../src/img:/app/src/img
               depends_on:
                 db:
                   condition: service_healthy
@@ -179,13 +179,27 @@ jobs:
           script: |
             cd ~/bangabot
             
+            # Debug info - print directory structure to help with troubleshooting
+            echo "Directory structure:"
+            ls -la
+            echo "Src app directory:"
+            ls -la src/app/
+            
+            # Ensure .env file is in the right location for the updated docker-compose
+            if [ -f ".env" ] && [ ! -f "src/app/.env" ]; then
+              echo "Creating symlink for .env file in src/app directory"
+              ln -sf ../.env src/app/.env
+            fi
+            
             # Build and start containers
+            echo "Starting containers with docker-compose..."
             docker-compose -f docker-compose.prod.yml up -d --build
             
             # Verify containers are running
             sleep 15
             if [ $(docker-compose -f docker-compose.prod.yml ps | grep "Up" | wc -l) -lt 2 ]; then
               echo "Containers failed to start properly"
+              echo "Docker logs:"
               docker-compose -f docker-compose.prod.yml logs
               exit 1
             fi
