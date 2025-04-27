@@ -43,7 +43,7 @@ intents.members = True          # For member details
 
 # Initialize bot with proper intents and command settings for Discord.py 2.0+
 bot = commands.Bot(
-    command_prefix='!',
+    command_prefix="!",  # Using a default prefix even if primarily using slash commands
     intents=intents,
     help_command=None,  # We'll use our own help command if needed
 )
@@ -91,6 +91,9 @@ async def on_ready():
     # Test environment info
     if 'PR_NUMBER' in os.environ:
         logger.info(f"Running in TEST environment for PR #{os.getenv('PR_NUMBER')}: {os.getenv('PR_TITLE', '')}")
+    
+    # Load extensions if not already loaded
+    await load_extensions()
     
     # Sync commands with Discord
     try:
@@ -203,12 +206,13 @@ async def sync(ctx, guild_id: int = None):
         logger.info("Synced commands globally")
 
 # Load extensions with error handling
-for extension in ['cogs.general', 'cogs.cod', 'cogs.pubg']:
-    try:
-        bot.load_extension(extension)
-        logger.info(f"Loaded extension: {extension}")
-    except Exception as e:
-        logger.error(f"Failed to load extension {extension}: {e}")
+async def load_extensions():
+    for extension in ['cogs.general', 'cogs.cod', 'cogs.pubg']:
+        try:
+            await bot.load_extension(extension)
+            logger.info(f"Loaded extension: {extension}")
+        except Exception as e:
+            logger.error(f"Failed to load extension {extension}: {e}")
 
 # Log that we're starting the bot
 logger.info("Starting BangaBot...")

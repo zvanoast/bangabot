@@ -3,6 +3,7 @@ import discord
 import pytz
 import random
 from discord.ext import commands
+from discord import app_commands
 
 class General(commands.Cog):
     def __init__(self, bot):
@@ -41,65 +42,49 @@ class General(commands.Cog):
     ]
 
     # Commands
-    @commands.hybrid_command(
-        brief='Say hello to BangaBot',
+    @app_commands.command(
+        name="hello",
         description='Say hello to BangaBot')
-    async def hello(self, ctx):
-        await ctx.send(self.determineGreeting())
+    async def hello(self, interaction: discord.Interaction):
+        await interaction.response.send_message(self.determineGreeting())
 
-    @commands.hybrid_command(
-        brief='Show a gif',
+    @app_commands.command(
+        name="gif",
         description='Show a gif. Current options: dana yeah(y), dana bummed(b), dana thumbsup(tu)')
-    async def gif(self, ctx, arg: str, arg2: str):
-        if arg == 'dana':
-            if arg2 == 'yeah' or arg2 == 'y':
-                await ctx.send(file=discord.File('src/img/danayeah.gif'))
-            if arg2 == 'bummed' or arg2 == 'b':
-                await ctx.send(file=discord.File('src/img/danabummed.gif'))
-            if arg2 == 'thumbsup' or arg2 == 'tu':
-                await ctx.send(file=discord.File('src/img/danathumbsup.gif'))
+    @app_commands.describe(arg="The gif type (y, b, tu)", arg2="Optional additional parameter")
+    async def gif(self, interaction: discord.Interaction, arg: str, arg2: str = None):
+        if arg == 'y' or arg == 'yeah' or arg == 'yes':
+            await interaction.response.send_message(file=discord.File('src/img/danayeah.gif'))
+        elif arg == 'b' or arg == 'bummed' or arg == 'bu':
+            await interaction.response.send_message(file=discord.File('src/img/danabummed.gif'))
+        elif arg == 'tu' or arg == 'thumbsup' or arg == 'thumbs up':
+            await interaction.response.send_message(file=discord.File('src/img/danathumbsup.gif'))
+        else:
+            await interaction.response.send_message('Invalid argument passed.')
 
-    @commands.hybrid_command(
-        brief='Repost.. BANT',
-        description='Repost.. BANT')
-    async def bant(self, ctx):
-        await ctx.send(file=discord.File('src/img/repostBANT.png'))
-
-    # Helper functions
+    @app_commands.command(
+        name="bant",
+        description='When someone reposts')
+    async def bant(self, interaction: discord.Interaction):
+        await interaction.response.send_message(file=discord.File('src/img/repostBANT.png'))
+    
     def determineGreeting(self):
-        responses = []
-        responses.extend(self.commonResponses)
+        easterEgg = random.randint(1, 100)
+        
+        if easterEgg <= 5:
+            return self.uncommonResponses[random.randint(0, len(self.uncommonResponses) - 1)]
+        
+        est = pytz.timezone('US/Eastern')
+        hour = datetime.datetime.now(tz=est).hour
 
-        eastern = pytz.timezone('US/Eastern')
-        currentEasternTime = datetime.datetime.now(eastern).time()
-        print('The current time is: ' + format(currentEasternTime))
-
-        morningStart = datetime.time(5, 0, 0)
-        morningEnd = datetime.time(11, 59, 0)
-        afternoonStart = datetime.time(12, 0, 0)
-        afternoonEnd = datetime.time(16, 59, 0)
-        # eveningStart = datetime.time(17, 0, 0)
-        # eveningEnd = datetime.time(4, 59, 00)
-
-        if self.isTimeInRange(morningStart, morningEnd, currentEasternTime):
-            responses.extend(self.morningResponses)
-        elif self.isTimeInRange(afternoonStart, afternoonEnd, currentEasternTime):
-            responses.extend(self.afternoonResponses)
+        if 5 <= hour < 12:
+            return self.morningResponses[random.randint(0, len(self.morningResponses) - 1)]
+        elif 12 <= hour < 17:
+            return self.afternoonResponses[random.randint(0, len(self.afternoonResponses) - 1)]
+        elif 17 <= hour < 22:
+            return self.eveningResponses[random.randint(0, len(self.eveningResponses) - 1)]
         else:
-            responses.extend(self.eveningResponses)
+            return self.commonResponses[random.randint(0, len(self.commonResponses) - 1)]
 
-        rand = random.randrange(1,50)
-        print('rand is ' + str(rand))
-        if rand == 23:
-            responses.extend(self.uncommonResponses)
-
-        return random.choice(responses)
-
-    def isTimeInRange(self, start, end, x):
-        if start <= end:
-            return start <= x <= end
-        else:
-            return start <= x or x <= end
-
-def setup(bot):
-    bot.add_cog(General(bot))
+async def setup(bot):
+    await bot.add_cog(General(bot))
