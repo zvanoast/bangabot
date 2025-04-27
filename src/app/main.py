@@ -91,6 +91,14 @@ async def on_ready():
     # Test environment info
     if 'PR_NUMBER' in os.environ:
         logger.info(f"Running in TEST environment for PR #{os.getenv('PR_NUMBER')}: {os.getenv('PR_TITLE', '')}")
+    
+    # Sync commands with Discord
+    try:
+        logger.info("Syncing commands with Discord...")
+        await bot.tree.sync()
+        logger.info("Command synchronization complete!")
+    except Exception as e:
+        logger.error(f"Failed to sync commands: {e}")
 
 # Handle listening to all incoming messages
 @bot.event
@@ -204,4 +212,10 @@ for extension in ['cogs.general', 'cogs.cod', 'cogs.pubg']:
 
 # Log that we're starting the bot
 logger.info("Starting BangaBot...")
-bot.run(os.getenv('TOKEN'))
+token = os.getenv('TOKEN')
+if not token:
+    logger.critical("TOKEN environment variable not set! Bot cannot start.")
+    sys.exit(1)
+else:
+    logger.info("Discord token found, connecting to Discord...")
+    bot.run(token)
