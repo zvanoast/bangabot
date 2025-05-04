@@ -17,7 +17,26 @@ class General(commands.Cog):
         'What''s up?',
         'Yo!',
         'Sup?',
-        'Hey there.'
+        'Hey there.',
+        'Greetings!',
+        'Howdy!',
+        'Salutations!',
+        'What''s good?',
+        'What''s poppin?',
+        'What''s crackin?',
+        'What''s shakin?',
+        'What''s cooking?',
+        'What''s the word?',
+        'What''s the haps?',
+        'What''s the scoop?',
+        'What''s the deal?',
+        'What''s the sitch?',
+        'What''s the 411?',
+        'What''s the vibe?',
+        'What''s the buzz?',
+        'What''s the lowdown?',
+        'What''s the skinny?',
+        'What''s the story?',
         ]
 
     uncommonResponses = [
