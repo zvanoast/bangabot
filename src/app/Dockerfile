@@ -6,7 +6,8 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt ./
-RUN pip install -r requirements.txt
+RUN pip install -r requirements.txt && \
+    pip install --no-deps callofduty.py==1.2.2
 
 COPY . .
 

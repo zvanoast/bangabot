@@ -207,7 +207,7 @@ async def sync(ctx, guild_id: int = None):
 
 # Load extensions with error handling
 async def load_extensions():
-    for extension in ['cogs.general', 'cogs.cod', 'cogs.pubg']:
+    for extension in ['cogs.general', 'cogs.cod', 'cogs.pubg', 'cogs.chat']:
         try:
             await bot.load_extension(extension)
             logger.info(f"Loaded extension: {extension}")

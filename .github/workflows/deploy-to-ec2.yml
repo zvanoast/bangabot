@@ -79,6 +79,7 @@ jobs:
           echo "DBNAME=${{ secrets.DBNAME }}" >> .env
           echo "DBPORT=5432" >> .env
           echo "DBHOST=db" >> .env
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
       
       - name: Create docker-compose.prod.yml
         run: |

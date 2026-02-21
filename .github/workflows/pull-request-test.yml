@@ -175,6 +175,7 @@ jobs:
           echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> .env.test
           echo "PR_TITLE=${{ github.event.pull_request.title }}" >> .env.test
           echo "PR_URL=${{ github.event.pull_request.html_url }}" >> .env.test
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env.test
           
           cat .env.test # Debug output to verify file content
       
