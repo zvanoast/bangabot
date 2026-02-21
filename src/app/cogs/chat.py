@@ -33,12 +33,14 @@ SYSTEM_PROMPT = (
 BASE_CHANCE = 0.02
 KEYWORD_CHANCE = 0.15
 COOLDOWN_SECONDS = 120
+ENGAGEMENT_SECONDS = 120
 
 
 class Chat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.channel_cooldowns = {}
+        self.engaged_channels = {}  # channel_id -> last_response_timestamp
 
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if api_key:
@@ -85,27 +87,58 @@ class Chat(commands.Cog):
             f"mentions={[str(m) for m in message.mentions]}"
         )
 
+        engaged = False
         if not mentioned:
-            # Check random chime-in chance
-            content_lower = message.content.lower()
-            has_keyword = any(kw in content_lower for kw in KEYWORDS)
-            chance = KEYWORD_CHANCE if has_keyword else BASE_CHANCE
-
-            if random.random() >= chance:
+            engaged = await self._check_engagement(message)
+            if engaged is None:
                 return
-
-            # Check per-channel cooldown for unprompted messages
-            now = time.time()
-            last_time = self.channel_cooldowns.get(message.channel.id, 0)
-            if now - last_time < COOLDOWN_SECONDS:
-                return
-
-            self.channel_cooldowns[message.channel.id] = now
 
         try:
-            await self._generate_response(message, mentioned)
+            await self._generate_response(
+                message, mentioned, engaged
+            )
         except Exception as e:
             logger.error(f"Chat cog error: {e}")
+
+    async def _check_engagement(self, message):
+        """Decide whether to respond to a non-mentioned message.
+
+        Returns True if engaged, False if random chime-in,
+        or None if the message should be skipped.
+        """
+        now = time.time()
+        channel_id = message.channel.id
+        last_engaged = self.engaged_channels.get(channel_id, 0)
+
+        if now - last_engaged < ENGAGEMENT_SECONDS:
+            # Channel is engaged — ask Claude if we should respond
+            should = await self._should_engage(message)
+            if not should:
+                return None
+            logger.info(
+                f"Engagement mode active in "
+                f"#{message.channel.name}"
+            )
+            return True
+
+        # Clear stale engagement
+        self.engaged_channels.pop(channel_id, None)
+
+        # Check random chime-in chance
+        content_lower = message.content.lower()
+        has_keyword = any(kw in content_lower for kw in KEYWORDS)
+        chance = KEYWORD_CHANCE if has_keyword else BASE_CHANCE
+
+        if random.random() >= chance:
+            return None
+
+        # Check per-channel cooldown for unprompted messages
+        last_time = self.channel_cooldowns.get(channel_id, 0)
+        if now - last_time < COOLDOWN_SECONDS:
+            return None
+
+        self.channel_cooldowns[channel_id] = now
+        return False
 
     async def _fetch_history(self, channel, fallback_message):
         """Fetch recent messages from the channel."""
@@ -119,13 +152,46 @@ class Chat(commands.Cog):
         history.reverse()
         return history
 
+    async def _should_engage(self, message):
+        """Quick Claude call to decide if the bot should respond."""
+        try:
+            history = []
+            async for msg in message.channel.history(limit=5):
+                history.append(msg)
+            history.reverse()
+
+            context = "\n".join(
+                f"{msg.author.display_name}: {msg.content}"
+                for msg in history if msg.content.strip()
+            )
+
+            response = await self.client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=3,
+                system=(
+                    "You are deciding whether BangaBot should "
+                    "respond to the latest message in a Discord "
+                    "chat. BangaBot was recently part of this "
+                    "conversation. Reply YES if the latest message "
+                    "is directed at or relevant to BangaBot, or "
+                    "NO if it's a side conversation between other "
+                    "people. Reply with only YES or NO."
+                ),
+                messages=[{"role": "user", "content": context}],
+            )
+            answer = response.content[0].text.strip().upper()
+            return answer.startswith("YES")
+        except Exception as e:
+            logger.error(f"Engagement relevance check failed: {e}")
+            return False
+
     def _build_api_messages(self, history):
         """Convert Discord history into Claude API message format."""
         messages_for_api = []
         for msg in history:
             if msg.author == self.bot.user:
                 role = "assistant"
-                content = "[You responded to the conversation]"
+                content = msg.content
             else:
                 role = "user"
                 content = f"{msg.author.display_name}: {msg.content}"
@@ -161,7 +227,9 @@ class Chat(commands.Cog):
                 return text[len(prefix):].lstrip()
         return text
 
-    async def _generate_response(self, message, mentioned):
+    async def _generate_response(
+        self, message, mentioned, engaged=False
+    ):
         history = await self._fetch_history(message.channel, message)
         messages_for_api = self._build_api_messages(history)
 
@@ -187,10 +255,14 @@ class Chat(commands.Cog):
                 )
                 if reply_text:
                     await message.channel.send(reply_text)
+                    self.engaged_channels[message.channel.id] = (
+                        time.time()
+                    )
                     logger.info(
                         f"Chat response sent in "
                         f"#{message.channel.name} "
-                        f"(mentioned={mentioned})"
+                        f"(mentioned={mentioned}, "
+                        f"engaged={engaged})"
                     )
             except Exception as e:
                 logger.error(f"Anthropic API error: {e}")
