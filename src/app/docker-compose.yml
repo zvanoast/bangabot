@@ -4,6 +4,7 @@ services:
     environment:
       DBHOST: db
       DBPORT: 5432
+      ENVIRONMENT: dev
       # Added logging environment variables
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     env_file:

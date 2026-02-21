@@ -34,6 +34,10 @@ BASE_CHANCE = 0.02
 KEYWORD_CHANCE = 0.15
 COOLDOWN_SECONDS = 120
 ENGAGEMENT_SECONDS = 120
+IS_PRODUCTION = (
+    os.getenv('ENVIRONMENT', 'prod') == 'prod'
+    and 'PR_NUMBER' not in os.environ
+)
 
 
 class Chat(commands.Cog):
@@ -71,15 +75,19 @@ class Chat(commands.Cog):
             logger.debug("Chat cog skipping - no client")
             return
 
-        # Skip own messages, other bots, and DMs
+        # Skip own messages and other bots
         if message.author == self.bot.user:
             return
         if message.author.bot:
             return
-        if isinstance(message.channel, discord.DMChannel):
+
+        is_dm = isinstance(message.channel, discord.DMChannel)
+
+        # Allow DMs only in dev/test environments
+        if is_dm and IS_PRODUCTION:
             return
 
-        mentioned = self.bot.user in message.mentions
+        mentioned = self.bot.user in message.mentions or is_dm
         logger.info(
             f"Chat cog processing message from "
             f"{message.author.display_name}: "
