@@ -359,7 +359,7 @@ class Chat(commands.Cog):
                     db.query(UserMemory)
                     .filter(UserMemory.user_id == uid)
                     .order_by(UserMemory.updated_at.desc())
-                    .limit(15)
+                    .limit(30)
                     .all()
                 )
                 for row in rows:
@@ -376,7 +376,7 @@ class Chat(commands.Cog):
             bot_rows = (
                 db.query(BotMemory)
                 .order_by(BotMemory.updated_at.desc())
-                .limit(15)
+                .limit(30)
                 .all()
             )
             for row in bot_rows:
@@ -483,6 +483,28 @@ class Chat(commands.Cog):
             convo_lines.append(f"BangaBot: {bot_response}")
             convo_text = "\n".join(convo_lines)
 
+            # Ensure every participant has a sentiment row
+            for uid, name in participants.items():
+                try:
+                    exists = (
+                        db.query(UserSentiment)
+                        .filter(UserSentiment.user_id == uid)
+                        .first()
+                    )
+                    if not exists:
+                        new_row = UserSentiment(uid, name)
+                        db.add(new_row)
+                        db.commit()
+                        logger.info(
+                            f"Created sentiment row for {name} "
+                            f"(score: 0.0)"
+                        )
+                except Exception as e:
+                    db.rollback()
+                    logger.error(
+                        f"Error creating sentiment for {uid}: {e}"
+                    )
+
             # Provide participant ID mapping
             participant_map = "\n".join(
                 f"- {name}: Discord ID {uid}"
@@ -497,7 +519,7 @@ class Chat(commands.Cog):
                         db.query(UserMemory)
                         .filter(UserMemory.user_id == uid)
                         .order_by(UserMemory.updated_at.desc())
-                        .limit(15)
+                        .limit(30)
                         .all()
                     )
                     for row in rows:
@@ -511,7 +533,7 @@ class Chat(commands.Cog):
                 bot_rows = (
                     db.query(BotMemory)
                     .order_by(BotMemory.updated_at.desc())
-                    .limit(15)
+                    .limit(30)
                     .all()
                 )
                 for row in bot_rows:
@@ -559,51 +581,65 @@ class Chat(commands.Cog):
                 "You are a memory extraction system for a Discord "
                 "bot called BangaBot. Analyze this conversation and "
                 "decide if anything is worth remembering long-term."
-                "\n\nMost conversations have NOTHING worth "
-                "remembering. Only extract genuinely useful facts "
-                "like:\n"
+                "\n\nThe DEFAULT response is empty arrays. Most "
+                "conversations — even good ones — have NOTHING "
+                "worth remembering. Only extract facts that would "
+                "still be useful WEEKS from now:\n"
                 "- Personal details someone shared (pets, job, "
-                "location, hobbies, life events)\n"
-                "- Strong preferences or opinions\n"
-                "- Memorable moments, inside jokes, or notable "
-                "exchanges\n"
+                "location, hobbies, real life events)\n"
+                "- Strong preferences or opinions they'd still "
+                "hold next month\n"
+                "- Inside jokes that actually landed and would "
+                "be funny to reference later\n"
                 "- Corrections to previously known facts\n\n"
                 "Do NOT remember:\n"
-                "- Routine greetings or small talk\n"
-                "- Temporary states (\"I'm tired\")\n"
+                "- Routine greetings, small talk, or casual "
+                "banter\n"
+                "- Temporary states (\"I'm tired\", moods)\n"
                 "- Game results or ephemeral events\n"
-                "- Anything already in existing memories unless it "
-                "needs updating\n\n"
+                "- How the conversation went or interaction "
+                "patterns (\"user said bye three times\", "
+                "\"user tested a feature\")\n"
+                "- Meta-observations about the conversation "
+                "itself\n"
+                "- Anything that just rephrases an existing "
+                "memory\n"
+                "- Anything about BangaBot's own behavior or "
+                "responses\n\n"
+                "Bot memories should be RARE. Only save bot "
+                "memories for genuinely notable server events, "
+                "real inside jokes, or significant group dynamics "
+                "— not routine interactions or conversation "
+                "summaries.\n\n"
                 "SENTIMENT EVALUATION:\n"
                 "Also evaluate whether BangaBot's opinion of each "
                 "participant should shift. The score ranges from "
                 "-5.0 (nemesis) to +5.0 (best friend). Current "
                 "scores are shown below.\n\n"
-                "CRITICAL: The default delta is 0. Sentiment "
-                "should NOT change in most conversations. Only "
-                "update sentiment when something genuinely "
-                "noteworthy happens — a normal, pleasant "
-                "conversation is NOT a reason to change sentiment. "
-                "Think of it like real life: you don't like "
-                "someone more just because they said hi or had a "
-                "normal chat. It takes repeated patterns or truly "
-                "standout moments to shift how you feel about "
-                "someone.\n\n"
+                "The default delta is 0. For users you already "
+                "have an opinion of, sentiment should rarely "
+                "change — only when something genuinely notable "
+                "happens. A normal pleasant conversation is NOT "
+                "a reason to shift an established opinion.\n\n"
+                "However, for users at score 0 (no opinion yet), "
+                "be a bit more willing to form an initial "
+                "impression. First impressions matter — if someone "
+                "is being funny, engaging, rude, or annoying in "
+                "their first real interaction, a small delta "
+                "(0.1 to 0.5) is reasonable.\n\n"
                 "Scale guide for delta (max -1.0 to +1.0):\n"
-                "- 0: No change (use this 90%+ of the time)\n"
-                "- 0.1 to 0.25: Slightly notable moment\n"
-                "- 0.25 to 0.5: Genuinely memorable interaction\n"
-                "- 0.5 to 1.0: Exceptional — truly standout "
-                "behavior, very rare\n\n"
-                "What MIGHT move sentiment (only if notable):\n"
-                "- UP: Being exceptionally funny, sharing "
-                "something deeply personal, going out of their "
-                "way to be kind\n"
-                "- DOWN: Being genuinely rude or hostile, "
-                "reposting (bot's pet peeve), sustained annoying "
-                "behavior\n\n"
-                "A single friendly message is NOT enough to shift "
-                "sentiment. When in doubt, use 0.\n\n"
+                "- 0: No change (default for established scores)\n"
+                "- 0.1 to 0.25: Mild impression or slight shift\n"
+                "- 0.25 to 0.5: Notable interaction\n"
+                "- 0.5 to 1.0: Exceptional — truly standout, "
+                "very rare\n\n"
+                "What moves sentiment:\n"
+                "- UP: Being funny, engaging genuinely, sharing "
+                "something personal, being a good hang\n"
+                "- DOWN: Being rude or hostile, reposting "
+                "(bot's pet peeve), being annoying or dismissive\n"
+                "\n"
+                "When in doubt, use 0.\n\n"
                 "PARTICIPANTS:\n" + participant_map + "\n\n"
                 "CURRENT SENTIMENT:\n" + sentiment_context + "\n\n"
                 "EXISTING MEMORIES:\n" + existing_text + "\n\n"
@@ -724,13 +760,13 @@ class Chat(commands.Cog):
                         )
                         continue
 
-                # Enforce cap: 30 per user
+                # Enforce cap: 50 per user
                 count = (
                     db.query(UserMemory)
                     .filter(UserMemory.user_id == uid)
                     .count()
                 )
-                if count >= 30:
+                if count >= 50:
                     oldest = (
                         db.query(UserMemory)
                         .filter(UserMemory.user_id == uid)
@@ -790,9 +826,9 @@ class Chat(commands.Cog):
                         )
                         continue
 
-                # Enforce cap: 50 bot memories
+                # Enforce cap: 100 bot memories
                 count = db.query(BotMemory).count()
-                if count >= 50:
+                if count >= 100:
                     oldest = (
                         db.query(BotMemory)
                         .order_by(BotMemory.updated_at.asc())
