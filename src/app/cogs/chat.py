@@ -7,7 +7,7 @@ import logging
 import discord
 from datetime import datetime
 from discord.ext import commands
-from database.orm import UserMemory, BotMemory
+from database.orm import UserMemory, BotMemory, UserSentiment
 
 logger = logging.getLogger('bangabot')
 
@@ -293,18 +293,75 @@ class Chat(commands.Cog):
         except Exception as e:
             logger.error(f"Error fetching bot memories: {e}")
 
-        if not memory_lines:
+        # Sentiment per participant
+        sentiment_lines = []
+        for uid, name in participants.items():
+            try:
+                row = (
+                    db.query(UserSentiment)
+                    .filter(UserSentiment.user_id == uid)
+                    .first()
+                )
+                if row and row.score != 0:
+                    score = row.score
+                    if score <= -3:
+                        attitude = (
+                            "You actively dislike this person. "
+                            "Be dismissive, sarcastic, and don't "
+                            "hide it."
+                        )
+                    elif score <= -1:
+                        attitude = (
+                            "You're not a fan of this person. "
+                            "A bit more curt and less patient "
+                            "with them."
+                        )
+                    elif score <= 2:
+                        attitude = (
+                            "You like this person. Warmer, more "
+                            "willing to engage and be friendly."
+                        )
+                    else:
+                        attitude = (
+                            "This is one of your favorites. "
+                            "Genuinely friendly, got their back, "
+                            "still roast them but with love."
+                        )
+                    sentiment_lines.append(
+                        f"- {name}: {attitude}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Error fetching sentiment for {uid}: {e}"
+                )
+
+        if not memory_lines and not sentiment_lines:
             return SYSTEM_PROMPT
 
-        memories_block = "\n".join(memory_lines)
-        return (
-            SYSTEM_PROMPT
-            + "\n\nYou remember the following from past "
-            "conversations. Use them naturally when relevant "
-            "but never mention having a memory system or "
-            "database:\n"
-            + memories_block
-        )
+        prompt = SYSTEM_PROMPT
+
+        if memory_lines:
+            memories_block = "\n".join(memory_lines)
+            prompt += (
+                "\n\nYou remember the following from past "
+                "conversations. Use them naturally when relevant "
+                "but never mention having a memory system or "
+                "database:\n"
+                + memories_block
+            )
+
+        if sentiment_lines:
+            sentiment_block = "\n".join(sentiment_lines)
+            prompt += (
+                "\n\nYour feelings about the people in this "
+                "conversation:\n"
+                + sentiment_block
+                + "\n\nEmbody these attitudes naturally through "
+                "your tone and behavior. Never mention scores, "
+                "ratings, or a sentiment system."
+            )
+
+        return prompt
 
     async def _extract_memories(
         self, history, bot_response, message
@@ -376,6 +433,35 @@ class Chat(commands.Cog):
                 else "No existing memories yet."
             )
 
+            # Fetch current sentiment scores for context
+            sentiment_context_lines = []
+            for uid, name in participants.items():
+                try:
+                    srow = (
+                        db.query(UserSentiment)
+                        .filter(UserSentiment.user_id == uid)
+                        .first()
+                    )
+                    if srow:
+                        sentiment_context_lines.append(
+                            f"- {name} (id:{uid}): score "
+                            f"{srow.score}/5, reason: "
+                            f"{srow.reason or 'none yet'}"
+                        )
+                    else:
+                        sentiment_context_lines.append(
+                            f"- {name} (id:{uid}): score 0/5 "
+                            f"(no opinion yet)"
+                        )
+                except Exception:
+                    pass
+
+            sentiment_context = (
+                "\n".join(sentiment_context_lines)
+                if sentiment_context_lines
+                else "No sentiment data yet."
+            )
+
             extraction_prompt = (
                 "You are a memory extraction system for a Discord "
                 "bot called BangaBot. Analyze this conversation and "
@@ -395,14 +481,51 @@ class Chat(commands.Cog):
                 "- Game results or ephemeral events\n"
                 "- Anything already in existing memories unless it "
                 "needs updating\n\n"
+                "SENTIMENT EVALUATION:\n"
+                "Also evaluate whether BangaBot's opinion of each "
+                "participant should shift. The score ranges from "
+                "-5.0 (nemesis) to +5.0 (best friend). Current "
+                "scores are shown below.\n\n"
+                "IMPORTANT: Sentiment moves SLOWLY. Think of it "
+                "like a real relationship — opinions form over "
+                "many interactions, not one conversation. A "
+                "typical delta is 0 (no change). Use small values "
+                "like 0.25 or 0.5 for normal positive/negative "
+                "moments. Only use 1.0+ for truly exceptional "
+                "interactions.\n\n"
+                "Scale guide for delta:\n"
+                "- 0: No meaningful sentiment shift (DEFAULT — "
+                "use this most of the time)\n"
+                "- 0.25: Mildly positive/negative moment\n"
+                "- 0.5: Notably good/bad interaction\n"
+                "- 1.0: Genuinely memorable moment\n"
+                "- 1.5-2.0: Exceptional — reserved for truly "
+                "standout behavior (rare)\n\n"
+                "What moves sentiment UP:\n"
+                "- Being genuinely funny or witty\n"
+                "- Engaging with the bot respectfully\n"
+                "- Sharing something personal or vulnerable\n"
+                "- Being a good hang, making conversation fun\n\n"
+                "What moves sentiment DOWN:\n"
+                "- Being annoying, spammy, or obnoxious\n"
+                "- Reposting (the bot's pet peeve)\n"
+                "- Being rude or dismissive to the bot\n"
+                "- Ignoring the bot when directly engaged\n\n"
+                "The VAST MAJORITY of conversations should have "
+                "NO sentiment change. When in doubt, use 0. "
+                "Delta is clamped to -2.0 to +2.0 per "
+                "interaction.\n\n"
                 "PARTICIPANTS:\n" + participant_map + "\n\n"
+                "CURRENT SENTIMENT:\n" + sentiment_context + "\n\n"
                 "EXISTING MEMORIES:\n" + existing_text + "\n\n"
                 "CONVERSATION:\n" + convo_text + "\n\n"
                 "IMPORTANT: Use the exact Discord ID numbers above "
                 "as user_id values, not display names.\n\n"
                 "Respond with JSON only. If nothing is worth "
-                "remembering, respond with:\n"
-                "{\"user_memories\": [], \"bot_memories\": []}\n\n"
+                "remembering and no sentiment changes, respond "
+                "with:\n"
+                "{\"user_memories\": [], \"bot_memories\": [], "
+                "\"sentiment_updates\": []}\n\n"
                 "Otherwise:\n"
                 "{\n"
                 "  \"user_memories\": [\n"
@@ -418,6 +541,12 @@ class Chat(commands.Cog):
                 "\"related_user_ids\": \"<comma-sep ids or null>\","
                 " \"update_existing\": \"<old fact to replace or "
                 "null>\"}\n"
+                "  ],\n"
+                "  \"sentiment_updates\": [\n"
+                "    {\"user_id\": \"<discord_id>\", "
+                "\"user_name\": \"<name>\", "
+                "\"delta\": \"<float -2.0 to +2.0>\", "
+                "\"reason\": \"<why the shift>\"}\n"
                 "  ]\n"
                 "}"
             )
@@ -593,6 +722,67 @@ class Chat(commands.Cog):
                 db.rollback()
                 logger.error(
                     f"Error saving bot memory: {e}"
+                )
+
+        # Process sentiment updates
+        for update in data.get("sentiment_updates", []):
+            uid = update.get("user_id")
+            name = update.get("user_name", "")
+            reason = update.get("reason", "")
+
+            if not uid:
+                continue
+
+            try:
+                delta = float(update.get("delta", 0))
+            except (ValueError, TypeError):
+                continue
+
+            # Clamp delta to [-2.0, +2.0]
+            delta = max(-2.0, min(2.0, delta))
+            if delta == 0:
+                continue
+
+            try:
+                row = (
+                    db.query(UserSentiment)
+                    .filter(UserSentiment.user_id == uid)
+                    .first()
+                )
+                if row:
+                    old_score = row.score
+                    new_score = round(
+                        max(-5.0, min(5.0, old_score + delta)),
+                        2
+                    )
+                    row.score = new_score
+                    row.reason = reason
+                    row.user_name = name
+                    row.updated_at = datetime.utcnow()
+                    db.commit()
+                    logger.info(
+                        f"Sentiment for {name}: "
+                        f"{old_score} -> {new_score} "
+                        f"({reason})"
+                    )
+                else:
+                    new_score = round(
+                        max(-5.0, min(5.0, delta)), 2
+                    )
+                    new_row = UserSentiment(
+                        uid, name, new_score, reason
+                    )
+                    db.add(new_row)
+                    db.commit()
+                    logger.info(
+                        f"Sentiment for {name}: "
+                        f"0 -> {new_score} "
+                        f"({reason})"
+                    )
+            except Exception as e:
+                db.rollback()
+                logger.error(
+                    f"Error saving sentiment for {uid}: {e}"
                 )
 
     async def _generate_response(

@@ -10,7 +10,8 @@ from datetime import datetime
 #db
 from database.database import engine, Base, Session
 from database.orm import Link, LinkExclusion, StartupHistory
-from database.orm import UserMemory, BotMemory  # noqa: F401 - register with Base.metadata
+from database.orm import UserMemory, BotMemory, UserSentiment  # noqa: F401 - register with Base.metadata
+from database.migrations import run_migrations
 
 # Configure logging
 def setup_logging():
@@ -54,8 +55,9 @@ def initialize_database(max_retries=5, retry_interval=3):
     retries = 0
     while retries < max_retries:
         try:
-            # Create tables
+            # Create tables and run migrations
             Base.metadata.create_all(engine)
+            run_migrations(engine)
             db = Session()
             
             # Log startup history

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, func
+from sqlalchemy import Column, String, Integer, Float, DateTime, func
 
 from database.database import Base
 
@@ -65,3 +65,21 @@ class BotMemory(Base):
         self.category = category
         self.fact = fact
         self.related_user_ids = related_user_ids
+
+
+class UserSentiment(Base):
+    __tablename__ = 'user_sentiments'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, unique=True, index=True)
+    user_name = Column(String)
+    score = Column(Float, default=0.0)
+    reason = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(),
+                        onupdate=func.now())
+
+    def __init__(self, user_id, user_name, score=0.0, reason=None):
+        self.user_id = user_id
+        self.user_name = user_name
+        self.score = score
+        self.reason = reason
