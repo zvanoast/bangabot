@@ -127,9 +127,13 @@ class Chat(commands.Cog):
             should = await self._should_engage(message)
             if not should:
                 return None
+            channel_name = (
+                getattr(message.channel, 'name', None)
+                or 'DM'
+            )
             logger.info(
                 f"Engagement mode active in "
-                f"#{message.channel.name}"
+                f"#{channel_name}"
             )
             return True
 
@@ -307,9 +311,11 @@ class Chat(commands.Cog):
     ):
         """Background task: ask Claude if anything is worth
         remembering from this exchange."""
+        logger.debug("Memory extraction started")
         try:
             db = getattr(self.bot, 'db', None)
             if not db:
+                logger.warning("Memory extraction skipped - no db")
                 return
 
             # Build condensed conversation (last 10 + bot reply)
@@ -326,6 +332,12 @@ class Chat(commands.Cog):
                 )
             convo_lines.append(f"BangaBot: {bot_response}")
             convo_text = "\n".join(convo_lines)
+
+            # Provide participant ID mapping
+            participant_map = "\n".join(
+                f"- {name}: Discord ID {uid}"
+                for uid, name in participants.items()
+            )
 
             # Fetch existing memories for context
             existing = []
@@ -383,8 +395,11 @@ class Chat(commands.Cog):
                 "- Game results or ephemeral events\n"
                 "- Anything already in existing memories unless it "
                 "needs updating\n\n"
+                "PARTICIPANTS:\n" + participant_map + "\n\n"
                 "EXISTING MEMORIES:\n" + existing_text + "\n\n"
                 "CONVERSATION:\n" + convo_text + "\n\n"
+                "IMPORTANT: Use the exact Discord ID numbers above "
+                "as user_id values, not display names.\n\n"
                 "Respond with JSON only. If nothing is worth "
                 "remembering, respond with:\n"
                 "{\"user_memories\": [], \"bot_memories\": []}\n\n"
@@ -418,12 +433,13 @@ class Chat(commands.Cog):
             )
 
             result_text = response.content[0].text.strip()
+            logger.debug(f"Memory extraction response: {result_text[:200]}")
             await self._process_extraction_result(
                 result_text, participants, message
             )
 
         except Exception as e:
-            logger.error(f"Memory extraction error: {e}")
+            logger.error(f"Memory extraction error: {e}", exc_info=True)
 
     async def _process_extraction_result(
         self, result_text, participants, message
@@ -433,8 +449,16 @@ class Chat(commands.Cog):
         if not db:
             return
 
+        # Strip markdown code fences if present
+        cleaned = result_text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+
         try:
-            data = json.loads(result_text)
+            data = json.loads(cleaned)
         except json.JSONDecodeError:
             logger.debug("Memory extraction returned non-JSON, skipping")
             return
@@ -606,9 +630,13 @@ class Chat(commands.Cog):
                     self.engaged_channels[message.channel.id] = (
                         time.time()
                     )
+                    channel_name = (
+                        getattr(message.channel, 'name', None)
+                        or 'DM'
+                    )
                     logger.info(
                         f"Chat response sent in "
-                        f"#{message.channel.name} "
+                        f"#{channel_name} "
                         f"(mentioned={mentioned}, "
                         f"engaged={engaged})"
                     )
