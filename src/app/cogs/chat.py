@@ -1,9 +1,13 @@
 import os
+import json
 import time
 import random
+import asyncio
 import logging
 import discord
+from datetime import datetime
 from discord.ext import commands
+from database.orm import UserMemory, BotMemory
 
 logger = logging.getLogger('bangabot')
 
@@ -235,6 +239,338 @@ class Chat(commands.Cog):
                 return text[len(prefix):].lstrip()
         return text
 
+    def _build_system_prompt_with_memories(self, history):
+        """Enrich the system prompt with relevant memories."""
+        db = getattr(self.bot, 'db', None)
+        if not db:
+            return SYSTEM_PROMPT
+
+        # Collect participant user IDs from history
+        participants = {}
+        for msg in history:
+            if msg.author != self.bot.user and not msg.author.bot:
+                participants[str(msg.author.id)] = (
+                    msg.author.display_name
+                )
+
+        memory_lines = []
+
+        # User memories
+        for uid, name in participants.items():
+            try:
+                rows = (
+                    db.query(UserMemory)
+                    .filter(UserMemory.user_id == uid)
+                    .order_by(UserMemory.updated_at.desc())
+                    .limit(15)
+                    .all()
+                )
+                for row in rows:
+                    memory_lines.append(
+                        f"- About {name}: {row.fact}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Error fetching user memories for {uid}: {e}"
+                )
+
+        # Bot memories
+        try:
+            bot_rows = (
+                db.query(BotMemory)
+                .order_by(BotMemory.updated_at.desc())
+                .limit(15)
+                .all()
+            )
+            for row in bot_rows:
+                memory_lines.append(
+                    f"- [{row.category}] {row.fact}"
+                )
+        except Exception as e:
+            logger.error(f"Error fetching bot memories: {e}")
+
+        if not memory_lines:
+            return SYSTEM_PROMPT
+
+        memories_block = "\n".join(memory_lines)
+        return (
+            SYSTEM_PROMPT
+            + "\n\nYou remember the following from past "
+            "conversations. Use them naturally when relevant "
+            "but never mention having a memory system or "
+            "database:\n"
+            + memories_block
+        )
+
+    async def _extract_memories(
+        self, history, bot_response, message
+    ):
+        """Background task: ask Claude if anything is worth
+        remembering from this exchange."""
+        try:
+            db = getattr(self.bot, 'db', None)
+            if not db:
+                return
+
+            # Build condensed conversation (last 10 + bot reply)
+            recent = history[-10:] if len(history) > 10 else history
+            convo_lines = []
+            participants = {}
+            for msg in recent:
+                if msg.author != self.bot.user and not msg.author.bot:
+                    participants[str(msg.author.id)] = (
+                        msg.author.display_name
+                    )
+                convo_lines.append(
+                    f"{msg.author.display_name}: {msg.content}"
+                )
+            convo_lines.append(f"BangaBot: {bot_response}")
+            convo_text = "\n".join(convo_lines)
+
+            # Fetch existing memories for context
+            existing = []
+            for uid, name in participants.items():
+                try:
+                    rows = (
+                        db.query(UserMemory)
+                        .filter(UserMemory.user_id == uid)
+                        .order_by(UserMemory.updated_at.desc())
+                        .limit(15)
+                        .all()
+                    )
+                    for row in rows:
+                        existing.append(
+                            f"About {name} (id:{uid}): {row.fact}"
+                        )
+                except Exception:
+                    pass
+
+            try:
+                bot_rows = (
+                    db.query(BotMemory)
+                    .order_by(BotMemory.updated_at.desc())
+                    .limit(15)
+                    .all()
+                )
+                for row in bot_rows:
+                    existing.append(
+                        f"Bot [{row.category}]: {row.fact}"
+                    )
+            except Exception:
+                pass
+
+            existing_text = (
+                "\n".join(existing) if existing
+                else "No existing memories yet."
+            )
+
+            extraction_prompt = (
+                "You are a memory extraction system for a Discord "
+                "bot called BangaBot. Analyze this conversation and "
+                "decide if anything is worth remembering long-term."
+                "\n\nMost conversations have NOTHING worth "
+                "remembering. Only extract genuinely useful facts "
+                "like:\n"
+                "- Personal details someone shared (pets, job, "
+                "location, hobbies, life events)\n"
+                "- Strong preferences or opinions\n"
+                "- Memorable moments, inside jokes, or notable "
+                "exchanges\n"
+                "- Corrections to previously known facts\n\n"
+                "Do NOT remember:\n"
+                "- Routine greetings or small talk\n"
+                "- Temporary states (\"I'm tired\")\n"
+                "- Game results or ephemeral events\n"
+                "- Anything already in existing memories unless it "
+                "needs updating\n\n"
+                "EXISTING MEMORIES:\n" + existing_text + "\n\n"
+                "CONVERSATION:\n" + convo_text + "\n\n"
+                "Respond with JSON only. If nothing is worth "
+                "remembering, respond with:\n"
+                "{\"user_memories\": [], \"bot_memories\": []}\n\n"
+                "Otherwise:\n"
+                "{\n"
+                "  \"user_memories\": [\n"
+                "    {\"user_id\": \"<discord_id>\", "
+                "\"user_name\": \"<name>\", "
+                "\"fact\": \"<concise fact>\", "
+                "\"update_existing\": \"<old fact to replace or "
+                "null>\"}\n"
+                "  ],\n"
+                "  \"bot_memories\": [\n"
+                "    {\"category\": \"<event|joke|relationship"
+                "|self>\", \"fact\": \"<concise fact>\", "
+                "\"related_user_ids\": \"<comma-sep ids or null>\","
+                " \"update_existing\": \"<old fact to replace or "
+                "null>\"}\n"
+                "  ]\n"
+                "}"
+            )
+
+            response = await self.client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=500,
+                system=extraction_prompt,
+                messages=[{
+                    "role": "user",
+                    "content": "Extract memories from the above."
+                }],
+            )
+
+            result_text = response.content[0].text.strip()
+            await self._process_extraction_result(
+                result_text, participants, message
+            )
+
+        except Exception as e:
+            logger.error(f"Memory extraction error: {e}")
+
+    async def _process_extraction_result(
+        self, result_text, participants, message
+    ):
+        """Parse extraction JSON and persist memories."""
+        db = getattr(self.bot, 'db', None)
+        if not db:
+            return
+
+        try:
+            data = json.loads(result_text)
+        except json.JSONDecodeError:
+            logger.debug("Memory extraction returned non-JSON, skipping")
+            return
+
+        # Process user memories
+        for mem in data.get("user_memories", []):
+            uid = mem.get("user_id")
+            name = mem.get("user_name", "")
+            fact = mem.get("fact", "").strip()
+            update = mem.get("update_existing")
+
+            if not uid or not fact:
+                continue
+
+            try:
+                # Check for exact duplicate
+                dup = (
+                    db.query(UserMemory)
+                    .filter(
+                        UserMemory.user_id == uid,
+                        UserMemory.fact == fact
+                    )
+                    .first()
+                )
+                if dup:
+                    continue
+
+                # Update existing if specified
+                if update:
+                    old = (
+                        db.query(UserMemory)
+                        .filter(
+                            UserMemory.user_id == uid,
+                            UserMemory.fact == update
+                        )
+                        .first()
+                    )
+                    if old:
+                        old.fact = fact
+                        old.user_name = name
+                        old.updated_at = datetime.utcnow()
+                        db.commit()
+                        logger.info(
+                            f"Updated memory for {name}: {fact}"
+                        )
+                        continue
+
+                # Enforce cap: 30 per user
+                count = (
+                    db.query(UserMemory)
+                    .filter(UserMemory.user_id == uid)
+                    .count()
+                )
+                if count >= 30:
+                    oldest = (
+                        db.query(UserMemory)
+                        .filter(UserMemory.user_id == uid)
+                        .order_by(UserMemory.updated_at.asc())
+                        .first()
+                    )
+                    if oldest:
+                        db.delete(oldest)
+
+                new_mem = UserMemory(uid, name, fact)
+                db.add(new_mem)
+                db.commit()
+                logger.info(
+                    f"New memory for {name}: {fact}"
+                )
+            except Exception as e:
+                db.rollback()
+                logger.error(
+                    f"Error saving user memory: {e}"
+                )
+
+        # Process bot memories
+        for mem in data.get("bot_memories", []):
+            category = mem.get("category", "event")
+            fact = mem.get("fact", "").strip()
+            related = mem.get("related_user_ids")
+            update = mem.get("update_existing")
+
+            if not fact:
+                continue
+
+            try:
+                # Check for exact duplicate
+                dup = (
+                    db.query(BotMemory)
+                    .filter(BotMemory.fact == fact)
+                    .first()
+                )
+                if dup:
+                    continue
+
+                # Update existing if specified
+                if update:
+                    old = (
+                        db.query(BotMemory)
+                        .filter(BotMemory.fact == update)
+                        .first()
+                    )
+                    if old:
+                        old.fact = fact
+                        old.category = category
+                        old.related_user_ids = related
+                        old.updated_at = datetime.utcnow()
+                        db.commit()
+                        logger.info(
+                            f"Updated bot memory: {fact}"
+                        )
+                        continue
+
+                # Enforce cap: 50 bot memories
+                count = db.query(BotMemory).count()
+                if count >= 50:
+                    oldest = (
+                        db.query(BotMemory)
+                        .order_by(BotMemory.updated_at.asc())
+                        .first()
+                    )
+                    if oldest:
+                        db.delete(oldest)
+
+                new_mem = BotMemory(category, fact, related)
+                db.add(new_mem)
+                db.commit()
+                logger.info(
+                    f"New bot memory [{category}]: {fact}"
+                )
+            except Exception as e:
+                db.rollback()
+                logger.error(
+                    f"Error saving bot memory: {e}"
+                )
+
     async def _generate_response(
         self, message, mentioned, engaged=False
     ):
@@ -250,12 +586,16 @@ class Chat(commands.Cog):
                 "this person.]"
             )
 
+        system_prompt = self._build_system_prompt_with_memories(
+            history
+        )
+
         async with message.channel.typing():
             try:
                 response = await self.client.messages.create(
                     model="claude-haiku-4-5-20251001",
                     max_tokens=300,
-                    system=SYSTEM_PROMPT,
+                    system=system_prompt,
                     messages=messages_for_api,
                 )
                 reply_text = self._strip_bot_prefix(
@@ -271,6 +611,11 @@ class Chat(commands.Cog):
                         f"#{message.channel.name} "
                         f"(mentioned={mentioned}, "
                         f"engaged={engaged})"
+                    )
+                    asyncio.create_task(
+                        self._extract_memories(
+                            history, reply_text, message
+                        )
                     )
             except Exception as e:
                 logger.error(f"Anthropic API error: {e}")

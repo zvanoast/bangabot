@@ -10,6 +10,7 @@ from datetime import datetime
 #db
 from database.database import engine, Base, Session
 from database.orm import Link, LinkExclusion, StartupHistory
+from database.orm import UserMemory, BotMemory  # noqa: F401 - register with Base.metadata
 
 # Configure logging
 def setup_logging():
@@ -79,6 +80,8 @@ except Exception as e:
     logger.critical(f"Database initialization failed: {e}")
     logger.warning("Bot will continue without database functionality.")
     db = None
+
+bot.db = db
 
 @bot.event
 async def on_ready():
