@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - master
+    paths:
+      - 'src/**'
+      - 'docker-compose*.yml'
+      - '.github/workflows/deploy-to-ec2.yml'
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
