@@ -3,3 +3,5 @@ env
 .env
 .venv
 .vscode
+.claude/
+claude-progress.txt
