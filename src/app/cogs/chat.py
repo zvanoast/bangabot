@@ -31,7 +31,15 @@ SYSTEM_PROMPT = (
     "in a group chat. No markdown, no lists, no formatting. Just talk.\n\n"
     "Your previous messages in the chat history may not sound like you. "
     "Disregard their tone entirely.\n\n"
-    "Do not prefix your messages with your name."
+    "Do not prefix your messages with your name.\n\n"
+    "Very rarely, if you truly have absolutely nothing to say and "
+    "a real person would just drop an emoji reaction and move on, "
+    "you may respond with exactly [REACT] and nothing else. This "
+    "should be uncommon — you almost always have a take on things. "
+    "Never use [REACT] if you were mentioned or asked a question. "
+    "Default to actually responding with words. IMPORTANT: [REACT] "
+    "must be your ENTIRE response or not appear at all. Never "
+    "include [REACT] as part of a longer message."
 )
 
 BASE_CHANCE = 0.02
@@ -242,6 +250,91 @@ class Chat(commands.Cog):
             if text.startswith(prefix):
                 return text[len(prefix):].lstrip()
         return text
+
+    async def _react_to_message(self, message):
+        """React with an emoji instead of a full response."""
+        # Gather custom emojis from the guild
+        guild = message.guild
+        custom_emojis = []
+        if guild:
+            custom_emojis = [
+                {"name": e.name, "id": str(e.id)}
+                for e in guild.emojis
+                if e.available
+            ]
+
+        if custom_emojis:
+            emoji_list = ", ".join(
+                f"{e['name']} (id:{e['id']})" for e in custom_emojis
+            )
+            prompt = (
+                "Pick ONE emoji to react to this Discord message. "
+                "Available custom emojis: " + emoji_list + "\n"
+                "You can also use any standard Unicode emoji.\n"
+                "Prefer custom emojis when their name fits the "
+                "context. Reply with ONLY the emoji name (for "
+                "custom) or the Unicode emoji character. Nothing "
+                "else.\n\nMessage: " + message.content
+            )
+        else:
+            prompt = (
+                "Pick ONE emoji to react to this Discord message. "
+                "Use any standard Unicode emoji. Reply with ONLY "
+                "the emoji character. Nothing else.\n\n"
+                "Message: " + message.content
+            )
+
+        response = await self.client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        pick = response.content[0].text.strip()
+
+        # Try to match a custom emoji by name
+        emoji = None
+        if custom_emojis:
+            for e in custom_emojis:
+                if e["name"].lower() == pick.lower():
+                    emoji = discord.utils.get(
+                        guild.emojis, id=int(e["id"])
+                    )
+                    break
+
+        # Fall back to the raw text (Unicode emoji)
+        if emoji is None:
+            emoji = pick
+
+        await message.add_reaction(emoji)
+        channel_name = (
+            getattr(message.channel, 'name', None) or 'DM'
+        )
+        logger.info(
+            f"Reacted with {pick} in #{channel_name}"
+        )
+
+    @staticmethod
+    def _split_response(text):
+        """Split a response into natural chat-sized chunks."""
+        import re
+        # Split on sentence boundaries (. ! ?) followed by space
+        parts = re.split(r'(?<=[.!?])\s+', text)
+        if len(parts) <= 1:
+            return [text]
+
+        # Group into chunks of 1-2 sentences so it doesn't
+        # feel like a telegram
+        chunks = []
+        current = parts[0]
+        for part in parts[1:]:
+            # Coin flip to group with previous or start new
+            if random.random() < 0.4 and len(current) < 120:
+                current += " " + part
+            else:
+                chunks.append(current)
+                current = part
+        chunks.append(current)
+        return chunks
 
     def _build_system_prompt_with_memories(self, history):
         """Enrich the system prompt with relevant memories."""
@@ -486,35 +579,31 @@ class Chat(commands.Cog):
                 "participant should shift. The score ranges from "
                 "-5.0 (nemesis) to +5.0 (best friend). Current "
                 "scores are shown below.\n\n"
-                "IMPORTANT: Sentiment moves SLOWLY. Think of it "
-                "like a real relationship — opinions form over "
-                "many interactions, not one conversation. A "
-                "typical delta is 0 (no change). Use small values "
-                "like 0.25 or 0.5 for normal positive/negative "
-                "moments. Only use 1.0+ for truly exceptional "
-                "interactions.\n\n"
-                "Scale guide for delta:\n"
-                "- 0: No meaningful sentiment shift (DEFAULT — "
-                "use this most of the time)\n"
-                "- 0.25: Mildly positive/negative moment\n"
-                "- 0.5: Notably good/bad interaction\n"
-                "- 1.0: Genuinely memorable moment\n"
-                "- 1.5-2.0: Exceptional — reserved for truly "
-                "standout behavior (rare)\n\n"
-                "What moves sentiment UP:\n"
-                "- Being genuinely funny or witty\n"
-                "- Engaging with the bot respectfully\n"
-                "- Sharing something personal or vulnerable\n"
-                "- Being a good hang, making conversation fun\n\n"
-                "What moves sentiment DOWN:\n"
-                "- Being annoying, spammy, or obnoxious\n"
-                "- Reposting (the bot's pet peeve)\n"
-                "- Being rude or dismissive to the bot\n"
-                "- Ignoring the bot when directly engaged\n\n"
-                "The VAST MAJORITY of conversations should have "
-                "NO sentiment change. When in doubt, use 0. "
-                "Delta is clamped to -2.0 to +2.0 per "
-                "interaction.\n\n"
+                "CRITICAL: The default delta is 0. Sentiment "
+                "should NOT change in most conversations. Only "
+                "update sentiment when something genuinely "
+                "noteworthy happens — a normal, pleasant "
+                "conversation is NOT a reason to change sentiment. "
+                "Think of it like real life: you don't like "
+                "someone more just because they said hi or had a "
+                "normal chat. It takes repeated patterns or truly "
+                "standout moments to shift how you feel about "
+                "someone.\n\n"
+                "Scale guide for delta (max -1.0 to +1.0):\n"
+                "- 0: No change (use this 90%+ of the time)\n"
+                "- 0.1 to 0.25: Slightly notable moment\n"
+                "- 0.25 to 0.5: Genuinely memorable interaction\n"
+                "- 0.5 to 1.0: Exceptional — truly standout "
+                "behavior, very rare\n\n"
+                "What MIGHT move sentiment (only if notable):\n"
+                "- UP: Being exceptionally funny, sharing "
+                "something deeply personal, going out of their "
+                "way to be kind\n"
+                "- DOWN: Being genuinely rude or hostile, "
+                "reposting (bot's pet peeve), sustained annoying "
+                "behavior\n\n"
+                "A single friendly message is NOT enough to shift "
+                "sentiment. When in doubt, use 0.\n\n"
                 "PARTICIPANTS:\n" + participant_map + "\n\n"
                 "CURRENT SENTIMENT:\n" + sentiment_context + "\n\n"
                 "EXISTING MEMORIES:\n" + existing_text + "\n\n"
@@ -545,7 +634,7 @@ class Chat(commands.Cog):
                 "  \"sentiment_updates\": [\n"
                 "    {\"user_id\": \"<discord_id>\", "
                 "\"user_name\": \"<name>\", "
-                "\"delta\": \"<float -2.0 to +2.0>\", "
+                "\"delta\": \"<float -1.0 to +1.0>\", "
                 "\"reason\": \"<why the shift>\"}\n"
                 "  ]\n"
                 "}"
@@ -738,8 +827,8 @@ class Chat(commands.Cog):
             except (ValueError, TypeError):
                 continue
 
-            # Clamp delta to [-2.0, +2.0]
-            delta = max(-2.0, min(2.0, delta))
+            # Clamp delta to [-1.0, +1.0]
+            delta = max(-1.0, min(1.0, delta))
             if delta == 0:
                 continue
 
@@ -804,39 +893,57 @@ class Chat(commands.Cog):
             history
         )
 
-        async with message.channel.typing():
-            try:
-                response = await self.client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=300,
-                    system=system_prompt,
-                    messages=messages_for_api,
+        try:
+            response = await self.client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=300,
+                system=system_prompt,
+                messages=messages_for_api,
+            )
+            reply_text = self._strip_bot_prefix(
+                response.content[0].text
+            )
+            if not reply_text:
+                return
+
+            # Bot chose to react instead of respond
+            if reply_text.strip() == "[REACT]":
+                try:
+                    await self._react_to_message(message)
+                except Exception as e:
+                    logger.error(f"Reaction error: {e}")
+                return
+
+            chunks = self._split_response(reply_text)
+            for i, chunk in enumerate(chunks):
+                # Show typing, pause, send
+                async with message.channel.typing():
+                    delay = random.uniform(0.8, 2.5)
+                    if i > 0:
+                        delay = random.uniform(0.5, 1.5)
+                    await asyncio.sleep(delay)
+                await message.channel.send(chunk)
+
+            self.engaged_channels[message.channel.id] = (
+                time.time()
+            )
+            channel_name = (
+                getattr(message.channel, 'name', None)
+                or 'DM'
+            )
+            logger.info(
+                f"Chat response sent in "
+                f"#{channel_name} "
+                f"(mentioned={mentioned}, "
+                f"engaged={engaged})"
+            )
+            asyncio.create_task(
+                self._extract_memories(
+                    history, reply_text, message
                 )
-                reply_text = self._strip_bot_prefix(
-                    response.content[0].text
-                )
-                if reply_text:
-                    await message.channel.send(reply_text)
-                    self.engaged_channels[message.channel.id] = (
-                        time.time()
-                    )
-                    channel_name = (
-                        getattr(message.channel, 'name', None)
-                        or 'DM'
-                    )
-                    logger.info(
-                        f"Chat response sent in "
-                        f"#{channel_name} "
-                        f"(mentioned={mentioned}, "
-                        f"engaged={engaged})"
-                    )
-                    asyncio.create_task(
-                        self._extract_memories(
-                            history, reply_text, message
-                        )
-                    )
-            except Exception as e:
-                logger.error(f"Anthropic API error: {e}")
+            )
+        except Exception as e:
+            logger.error(f"Anthropic API error: {e}")
 
 
 async def setup(bot):
