@@ -129,9 +129,23 @@ class Chat(commands.Cog):
         now = time.time()
         channel_id = message.channel.id
         last_engaged = self.engaged_channels.get(channel_id, 0)
+        elapsed = now - last_engaged
 
-        if now - last_engaged < ENGAGEMENT_SECONDS:
-            # Channel is engaged — ask Claude if we should respond
+        if elapsed < ENGAGEMENT_SECONDS:
+            # Grace period: always respond to the first message
+            # right after the bot spoke (likely directed at us)
+            if elapsed < 30:
+                channel_name = (
+                    getattr(message.channel, 'name', None)
+                    or 'DM'
+                )
+                logger.info(
+                    f"Engagement mode active in "
+                    f"#{channel_name} (grace period)"
+                )
+                return True
+
+            # Outside grace period — ask Claude if we should respond
             should = await self._should_engage(message)
             if not should:
                 return None
