@@ -117,7 +117,7 @@ jobs:
                   max-size: "10m"
                   max-file: "3"
             db:
-              image: postgres:17
+              image: pgvector/pgvector:pg17
               environment:
                 POSTGRES_USER: \${DBUSER}
                 POSTGRES_PASSWORD: \${DBPASS}

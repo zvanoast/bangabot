@@ -10,7 +10,7 @@ from datetime import datetime
 #db
 from database.database import engine, Base, Session
 from database.orm import Link, LinkExclusion, StartupHistory
-from database.orm import UserMemory, BotMemory, UserSentiment  # noqa: F401 - register with Base.metadata
+from database.orm import UserMemory, BotMemory, UserSentiment, EpisodicSummary  # noqa: F401 - register with Base.metadata
 from database.migrations import run_migrations
 
 # Configure logging
@@ -55,9 +55,10 @@ def initialize_database(max_retries=5, retry_interval=3):
     retries = 0
     while retries < max_retries:
         try:
-            # Create tables and run migrations
-            Base.metadata.create_all(engine)
+            # Run migrations first (enables pgvector extension),
+            # then create any new tables
             run_migrations(engine)
+            Base.metadata.create_all(engine)
             db = Session()
             
             # Log startup history

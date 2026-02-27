@@ -8,6 +8,7 @@ import discord
 from datetime import datetime
 from discord.ext import commands
 from database.orm import UserMemory, BotMemory, UserSentiment
+from cogs import memory_manager
 
 logger = logging.getLogger('bangabot')
 
@@ -55,11 +56,21 @@ IS_PRODUCTION = (
 )
 
 
+EPISODE_GAP_SECONDS = 1800  # 30 minutes
+EPISODE_VOLUME_THRESHOLD = 50
+EPISODE_MIN_MESSAGES = 5
+
+
 class Chat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.channel_cooldowns = {}
         self.engaged_channels = {}  # channel_id -> last_response_timestamp
+        # Episode tracking: channel_id -> list of message dicts
+        self.channel_episodes = {}
+        # Per-channel message count since last episode summary
+        self.channel_msg_counts = {}
+        self._backfill_done = False
 
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if api_key:
@@ -353,7 +364,12 @@ class Chat(commands.Cog):
         chunks.append(current)
         return chunks
 
-    def _build_system_prompt_with_memories(self, history):
+    @staticmethod
+    def _estimate_tokens(text):
+        """Estimate token count. Overestimates for safety."""
+        return len(text) // 4
+
+    async def _build_system_prompt_with_memories(self, history):
         """Enrich the system prompt with relevant memories."""
         db = getattr(self.bot, 'db', None)
         if not db:
@@ -367,49 +383,25 @@ class Chat(commands.Cog):
                     msg.author.display_name
                 )
 
-        memory_lines = []
+        channel_id = (
+            history[0].channel.id if history else None
+        )
 
-        # User memories
-        for uid, name in participants.items():
-            try:
-                rows = (
-                    db.query(UserMemory)
-                    .filter(UserMemory.user_id == uid)
-                    .order_by(UserMemory.updated_at.desc())
-                    .limit(30)
-                    .all()
-                )
-                for row in rows:
-                    memory_lines.append(
-                        f"- About {name}: {row.fact}"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"Error fetching user memories for {uid}: {e}"
-                )
-
-        # Bot memories
-        try:
-            bot_rows = (
-                db.query(BotMemory)
-                .order_by(BotMemory.updated_at.desc())
-                .limit(30)
-                .all()
+        # Use memory_manager for token-budgeted retrieval
+        # with vector search
+        memory_lines, summary_lines = (
+            await memory_manager.retrieve_memories(
+                db, participants, history, channel_id
             )
-            for row in bot_rows:
-                memory_lines.append(
-                    f"- [{row.category}] {row.fact}"
-                )
-        except Exception as e:
-            logger.error(f"Error fetching bot memories: {e}")
+        )
 
-        # Sentiment per participant
+        # Sentiment per participant (sync is fine, fast query)
         sentiment_lines = []
         for uid, name in participants.items():
             try:
-                row = (
-                    db.query(UserSentiment)
-                    .filter(UserSentiment.user_id == uid)
+                row = await asyncio.to_thread(
+                    lambda u=uid: db.query(UserSentiment)
+                    .filter(UserSentiment.user_id == u)
                     .first()
                 )
                 if row and row.score != 0:
@@ -445,7 +437,8 @@ class Chat(commands.Cog):
                     f"Error fetching sentiment for {uid}: {e}"
                 )
 
-        if not memory_lines and not sentiment_lines:
+        if (not memory_lines and not sentiment_lines
+                and not summary_lines):
             return SYSTEM_PROMPT
 
         prompt = SYSTEM_PROMPT
@@ -453,18 +446,25 @@ class Chat(commands.Cog):
         if memory_lines:
             memories_block = "\n".join(memory_lines)
             prompt += (
-                "\n\nYou remember the following from past "
+                "\n\n[CORE MEMORIES]\n"
+                "You remember the following from past "
                 "conversations. Use them naturally when relevant "
                 "but never mention having a memory system or "
                 "database:\n"
                 + memories_block
             )
 
+        if summary_lines:
+            summaries_block = "\n".join(summary_lines)
+            prompt += (
+                "\n\n[RECENT CONTEXT]\n"
+                + summaries_block
+            )
+
         if sentiment_lines:
             sentiment_block = "\n".join(sentiment_lines)
             prompt += (
-                "\n\nYour feelings about the people in this "
-                "conversation:\n"
+                "\n\n[RELATIONSHIPS]\n"
                 + sentiment_block
                 + "\n\nEmbody these attitudes naturally through "
                 "your tone and behavior. Never mention scores, "
@@ -674,12 +674,14 @@ class Chat(commands.Cog):
                 "    {\"user_id\": \"<discord_id>\", "
                 "\"user_name\": \"<name>\", "
                 "\"fact\": \"<concise fact>\", "
+                "\"importance\": <1|2|3>, "
                 "\"update_existing\": \"<old fact to replace or "
                 "null>\"}\n"
                 "  ],\n"
                 "  \"bot_memories\": [\n"
                 "    {\"category\": \"<event|joke|relationship"
                 "|self>\", \"fact\": \"<concise fact>\", "
+                "\"importance\": <1|2|3>, "
                 "\"related_user_ids\": \"<comma-sep ids or null>\","
                 " \"update_existing\": \"<old fact to replace or "
                 "null>\"}\n"
@@ -690,7 +692,12 @@ class Chat(commands.Cog):
                 "\"delta\": \"<float -1.0 to +1.0>\", "
                 "\"reason\": \"<why the shift>\"}\n"
                 "  ]\n"
-                "}"
+                "}\n\n"
+                "IMPORTANCE LEVELS:\n"
+                "3 = identity-defining (name, job, location, "
+                "family)\n"
+                "2 = notable preference/hobby/opinion (default)\n"
+                "1 = lighter facts, inside jokes, one-off details"
             )
 
             response = await self.client.messages.create(
@@ -741,6 +748,13 @@ class Chat(commands.Cog):
             fact = mem.get("fact", "").strip()
             update = mem.get("update_existing")
 
+            importance = mem.get("importance", 2)
+            try:
+                importance = int(importance)
+                importance = max(1, min(3, importance))
+            except (ValueError, TypeError):
+                importance = 2
+
             if not uid or not fact:
                 continue
 
@@ -757,7 +771,43 @@ class Chat(commands.Cog):
                 if dup:
                     continue
 
-                # Update existing if specified
+                # Similarity-based dedup (Phase 5)
+                similar = (
+                    await memory_manager.find_similar_memories(
+                        db, 'user_memories', fact, uid
+                    )
+                )
+                if similar:
+                    # Merge: update the most similar row
+                    merge_id = similar[0][0]
+                    old = (
+                        db.query(UserMemory)
+                        .filter(UserMemory.id == merge_id)
+                        .first()
+                    )
+                    if old:
+                        old.fact = fact
+                        old.user_name = name
+                        old.importance = max(
+                            importance, old.importance or 2
+                        )
+                        old.updated_at = datetime.utcnow()
+                        old.embedding = None  # re-embed
+                        db.commit()
+                        logger.info(
+                            f"Merged similar memory for "
+                            f"{name}: {fact} "
+                            f"(sim={similar[0][1]:.2f})"
+                        )
+                        asyncio.create_task(
+                            memory_manager
+                            .store_embedding_for_memory(
+                                db, old, 'user_memories'
+                            )
+                        )
+                        continue
+
+                # Exact-match update_existing fallback
                 if update:
                     old = (
                         db.query(UserMemory)
@@ -770,34 +820,56 @@ class Chat(commands.Cog):
                     if old:
                         old.fact = fact
                         old.user_name = name
+                        old.importance = importance
                         old.updated_at = datetime.utcnow()
+                        old.embedding = None
                         db.commit()
                         logger.info(
-                            f"Updated memory for {name}: {fact}"
+                            f"Updated memory for {name}: "
+                            f"{fact} (importance: {importance})"
+                        )
+                        asyncio.create_task(
+                            memory_manager
+                            .store_embedding_for_memory(
+                                db, old, 'user_memories'
+                            )
                         )
                         continue
 
-                # Enforce cap: 50 per user
+                # Enforce cap: 500 per user
                 count = (
                     db.query(UserMemory)
                     .filter(UserMemory.user_id == uid)
                     .count()
                 )
-                if count >= 50:
+                if count >= 500:
+                    # Evict lowest importance, oldest first
                     oldest = (
                         db.query(UserMemory)
                         .filter(UserMemory.user_id == uid)
-                        .order_by(UserMemory.updated_at.asc())
+                        .order_by(
+                            UserMemory.importance.asc(),
+                            UserMemory.updated_at.asc()
+                        )
                         .first()
                     )
                     if oldest:
                         db.delete(oldest)
 
-                new_mem = UserMemory(uid, name, fact)
+                new_mem = UserMemory(
+                    uid, name, fact, importance
+                )
                 db.add(new_mem)
                 db.commit()
                 logger.info(
-                    f"New memory for {name}: {fact}"
+                    f"New memory for {name}: {fact} "
+                    f"(importance: {importance})"
+                )
+                # Embed in background
+                asyncio.create_task(
+                    memory_manager.store_embedding_for_memory(
+                        db, new_mem, 'user_memories'
+                    )
                 )
             except Exception as e:
                 db.rollback()
@@ -811,6 +883,12 @@ class Chat(commands.Cog):
             fact = mem.get("fact", "").strip()
             related = mem.get("related_user_ids")
             update = mem.get("update_existing")
+            importance = mem.get("importance", 2)
+            try:
+                importance = int(importance)
+                importance = max(1, min(3, importance))
+            except (ValueError, TypeError):
+                importance = 2
 
             if not fact:
                 continue
@@ -825,7 +903,43 @@ class Chat(commands.Cog):
                 if dup:
                     continue
 
-                # Update existing if specified
+                # Similarity-based dedup (Phase 5)
+                similar = (
+                    await memory_manager.find_similar_memories(
+                        db, 'bot_memories', fact
+                    )
+                )
+                if similar:
+                    merge_id = similar[0][0]
+                    old = (
+                        db.query(BotMemory)
+                        .filter(BotMemory.id == merge_id)
+                        .first()
+                    )
+                    if old:
+                        old.fact = fact
+                        old.category = category
+                        old.related_user_ids = related
+                        old.importance = max(
+                            importance, old.importance or 2
+                        )
+                        old.updated_at = datetime.utcnow()
+                        old.embedding = None
+                        db.commit()
+                        logger.info(
+                            f"Merged similar bot memory: "
+                            f"{fact} "
+                            f"(sim={similar[0][1]:.2f})"
+                        )
+                        asyncio.create_task(
+                            memory_manager
+                            .store_embedding_for_memory(
+                                db, old, 'bot_memories'
+                            )
+                        )
+                        continue
+
+                # Exact-match update_existing fallback
                 if update:
                     old = (
                         db.query(BotMemory)
@@ -836,29 +950,51 @@ class Chat(commands.Cog):
                         old.fact = fact
                         old.category = category
                         old.related_user_ids = related
+                        old.importance = importance
                         old.updated_at = datetime.utcnow()
+                        old.embedding = None
                         db.commit()
                         logger.info(
-                            f"Updated bot memory: {fact}"
+                            f"Updated bot memory: {fact} "
+                            f"(importance: {importance})"
+                        )
+                        asyncio.create_task(
+                            memory_manager
+                            .store_embedding_for_memory(
+                                db, old, 'bot_memories'
+                            )
                         )
                         continue
 
-                # Enforce cap: 100 bot memories
+                # Enforce cap: 1000 bot memories
                 count = db.query(BotMemory).count()
-                if count >= 100:
+                if count >= 1000:
+                    # Evict lowest importance, oldest first
                     oldest = (
                         db.query(BotMemory)
-                        .order_by(BotMemory.updated_at.asc())
+                        .order_by(
+                            BotMemory.importance.asc(),
+                            BotMemory.updated_at.asc()
+                        )
                         .first()
                     )
                     if oldest:
                         db.delete(oldest)
 
-                new_mem = BotMemory(category, fact, related)
+                new_mem = BotMemory(
+                    category, fact, related, importance
+                )
                 db.add(new_mem)
                 db.commit()
                 logger.info(
-                    f"New bot memory [{category}]: {fact}"
+                    f"New bot memory [{category}]: {fact} "
+                    f"(importance: {importance})"
+                )
+                # Embed in background
+                asyncio.create_task(
+                    memory_manager.store_embedding_for_memory(
+                        db, new_mem, 'bot_memories'
+                    )
                 )
             except Exception as e:
                 db.rollback()
@@ -927,9 +1063,74 @@ class Chat(commands.Cog):
                     f"Error saving sentiment for {uid}: {e}"
                 )
 
+    def _track_episode_message(self, message, is_bot=False):
+        """Track a message for episodic summarization."""
+        channel_id = message.channel.id
+        now = time.time()
+
+        # Initialize episode tracking for this channel
+        if channel_id not in self.channel_episodes:
+            self.channel_episodes[channel_id] = []
+            self.channel_msg_counts[channel_id] = 0
+
+        episode = self.channel_episodes[channel_id]
+
+        # Check gap trigger: if last message was >30 min ago,
+        # finalize the previous episode
+        if (episode and
+                now - episode[-1].get('time', 0)
+                > EPISODE_GAP_SECONDS):
+            self._trigger_episode_summary(channel_id)
+
+        # Add current message
+        episode.append({
+            'author': message.author.display_name,
+            'author_id': str(message.author.id),
+            'content': message.content,
+            'is_bot': is_bot,
+            'timestamp': message.created_at,
+            'time': now,
+        })
+        self.channel_msg_counts[channel_id] = (
+            self.channel_msg_counts.get(channel_id, 0) + 1
+        )
+
+        # Volume trigger: every 50 messages
+        if (self.channel_msg_counts[channel_id]
+                >= EPISODE_VOLUME_THRESHOLD):
+            self._trigger_episode_summary(channel_id)
+
+    def _trigger_episode_summary(self, channel_id):
+        """Trigger summarization of the current episode buffer."""
+        episode = self.channel_episodes.get(channel_id, [])
+        self.channel_episodes[channel_id] = []
+        self.channel_msg_counts[channel_id] = 0
+
+        if len(episode) < EPISODE_MIN_MESSAGES:
+            return
+
+        db = getattr(self.bot, 'db', None)
+        if not db or not self.client:
+            return
+
+        asyncio.create_task(
+            memory_manager.summarize_episode(
+                self.client, episode, channel_id, db
+            )
+        )
+
     async def _generate_response(
         self, message, mentioned, engaged=False
     ):
+        # One-time embedding backfill on first response
+        if not self._backfill_done:
+            self._backfill_done = True
+            db = getattr(self.bot, 'db', None)
+            if db:
+                asyncio.create_task(
+                    memory_manager.backfill_embeddings(db)
+                )
+
         history = await self._fetch_history(message.channel, message)
         messages_for_api = self._build_api_messages(history)
 
@@ -942,8 +1143,13 @@ class Chat(commands.Cog):
                 "this person.]"
             )
 
-        system_prompt = self._build_system_prompt_with_memories(
-            history
+        # Track incoming message for episode detection
+        self._track_episode_message(message, is_bot=False)
+
+        system_prompt = (
+            await self._build_system_prompt_with_memories(
+                history
+            )
         )
 
         try:
@@ -980,6 +1186,21 @@ class Chat(commands.Cog):
             self.engaged_channels[message.channel.id] = (
                 time.time()
             )
+
+            # Track bot response for episode detection
+            bot_msg_proxy = type('Msg', (), {
+                'channel': message.channel,
+                'author': type('Author', (), {
+                    'display_name': 'BangaBot',
+                    'id': self.bot.user.id,
+                })(),
+                'content': reply_text,
+                'created_at': datetime.utcnow(),
+            })()
+            self._track_episode_message(
+                bot_msg_proxy, is_bot=True
+            )
+
             channel_name = (
                 getattr(message.channel, 'name', None)
                 or 'DM'

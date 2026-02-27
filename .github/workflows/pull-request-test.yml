@@ -208,7 +208,7 @@ jobs:
                 - bangabot_network
             
             db:
-              image: postgres:17
+              image: pgvector/pgvector:pg17
               environment:
                 POSTGRES_USER: \${DBUSER}
                 POSTGRES_PASSWORD: \${DBPASS}
