@@ -112,7 +112,7 @@ jobs:
                   max-size: "10m"
                   max-file: "3"
             db:
-              image: postgres
+              image: postgres:17
               environment:
                 POSTGRES_USER: \${DBUSER}
                 POSTGRES_PASSWORD: \${DBPASS}
@@ -150,14 +150,13 @@ jobs:
               docker-compose -f docker-compose.prod.yml down
             fi
 
-            # Aggressive cleanup — remove all unused images, build cache, and volumes
+            # Cleanup unused images and build cache (NEVER prune volumes — DB data lives there)
             docker system prune -af 2>/dev/null || true
 
             # Check disk space — fail early if critically low
             AVAIL=$(df / --output=avail | tail -1 | tr -d ' ')
             if [ "$AVAIL" -lt 524288 ]; then
               echo "WARNING: Less than 512MB free disk space ($AVAIL KB). Cleaning more aggressively..."
-              docker volume prune -f 2>/dev/null || true
               sudo journalctl --vacuum-size=50M 2>/dev/null || true
               sudo apt-get clean 2>/dev/null || true
             fi

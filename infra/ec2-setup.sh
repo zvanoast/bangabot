@@ -67,9 +67,9 @@ fi
 echo "[setup] Installing weekly Docker cleanup cron..."
 cat <<'CRON_SCRIPT' | sudo tee /etc/cron.weekly/docker-cleanup > /dev/null
 #!/bin/bash
-# Weekly Docker cleanup — remove images/cache older than 72h
+# Weekly Docker cleanup — remove unused images/cache older than 72h
+# NEVER prune volumes — the database lives there
 docker system prune -af --filter "until=72h" 2>/dev/null
-docker volume prune -f 2>/dev/null
 echo "$(date) - Docker prune completed, disk: $(df -h / | tail -1 | awk '{print $5}')" >> /var/log/docker-cleanup.log
 CRON_SCRIPT
 sudo chmod +x /etc/cron.weekly/docker-cleanup

@@ -203,7 +203,7 @@ jobs:
                 - bangabot_network
             
             db:
-              image: postgres
+              image: postgres:17
               environment:
                 POSTGRES_USER: \${DBUSER}
                 POSTGRES_PASSWORD: \${DBPASS}
