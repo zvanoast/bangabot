@@ -11,6 +11,11 @@ on:
       - '.github/workflows/deploy-to-ec2.yml'
   workflow_dispatch:  # Allows manual triggering
 
+# Only one deploy can run at a time. New pushes cancel in-progress deploys.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test Application
