@@ -3,8 +3,8 @@
 # EC2 Connectivity Troubleshooting Script
 # This script checks connectivity to your EC2 instance and helps diagnose issues
 
-# Set the target EC2 instance - replace with your instance IP
-EC2_HOST="34.227.47.206"
+# Set the target EC2 instance — pass as argument or set EC2_HOST env var
+EC2_HOST="${2:-${EC2_HOST:-3.235.70.243}}"
 EC2_PORT=22
 
 echo "=== EC2 Connectivity Check ==="
