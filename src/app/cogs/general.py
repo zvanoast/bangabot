@@ -1,9 +1,13 @@
 import datetime
+import logging
 import discord
 import pytz
 import random
 from discord.ext import commands
 from discord import app_commands
+from database.orm import LinkExclusion
+
+logger = logging.getLogger('bangabot')
 
 class General(commands.Cog):
     def __init__(self, bot):
@@ -68,6 +72,79 @@ class General(commands.Cog):
     async def bant(self, interaction: discord.Interaction):
         await interaction.response.send_message(file=discord.File('src/img/repostBANT.png'))
     
+    @app_commands.command(
+        name="exclude-link",
+        description='Add a URL pattern to exclude from repost detection')
+    @app_commands.describe(url="Base URL to exclude (e.g. giphy.com, tenor.com)")
+    async def exclude_link(self, interaction: discord.Interaction, url: str):
+        db = self.bot.db
+        if db is None:
+            await interaction.response.send_message(
+                "Database not available.", ephemeral=True)
+            return
+
+        # Check if already excluded
+        existing = db.query(LinkExclusion).filter(
+            LinkExclusion.url == url).first()
+        if existing:
+            await interaction.response.send_message(
+                f"`{url}` is already excluded.", ephemeral=True)
+            return
+
+        exclusion = LinkExclusion(url)
+        db.add(exclusion)
+        db.commit()
+        logger.info(
+            f"Link exclusion added by {interaction.user.name}: {url}")
+        await interaction.response.send_message(
+            f"Added `{url}` to repost exclusions. "
+            f"URLs containing this pattern will be ignored.")
+
+    @app_commands.command(
+        name="include-link",
+        description='Remove a URL pattern from the exclusion list')
+    @app_commands.describe(url="The URL pattern to remove from exclusions")
+    async def include_link(self, interaction: discord.Interaction, url: str):
+        db = self.bot.db
+        if db is None:
+            await interaction.response.send_message(
+                "Database not available.", ephemeral=True)
+            return
+
+        existing = db.query(LinkExclusion).filter(
+            LinkExclusion.url == url).first()
+        if not existing:
+            await interaction.response.send_message(
+                f"`{url}` is not in the exclusion list.", ephemeral=True)
+            return
+
+        db.delete(existing)
+        db.commit()
+        logger.info(
+            f"Link exclusion removed by {interaction.user.name}: {url}")
+        await interaction.response.send_message(
+            f"Removed `{url}` from repost exclusions.")
+
+    @app_commands.command(
+        name="list-exclusions",
+        description='Show all URL patterns excluded from repost detection')
+    async def list_exclusions(self, interaction: discord.Interaction):
+        db = self.bot.db
+        if db is None:
+            await interaction.response.send_message(
+                "Database not available.", ephemeral=True)
+            return
+
+        exclusions = db.query(LinkExclusion).all()
+        if not exclusions:
+            await interaction.response.send_message(
+                "No URL exclusions set.", ephemeral=True)
+            return
+
+        lines = [f"- `{e.url}`" for e in exclusions]
+        await interaction.response.send_message(
+            "**Excluded URL patterns:**\n" + "\n".join(lines))
+
     def determineGreeting(self):
         easterEgg = random.randint(1, 100)
         
