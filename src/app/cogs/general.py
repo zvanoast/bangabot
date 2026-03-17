@@ -76,6 +76,7 @@ class General(commands.Cog):
         name="exclude-link",
         description='Add a URL pattern to exclude from repost detection')
     @app_commands.describe(url="Base URL to exclude (e.g. giphy.com, tenor.com)")
+    @app_commands.checks.has_any_role("Admin", "Mod")
     async def exclude_link(self, interaction: discord.Interaction, url: str):
         db = self.bot.db
         if db is None:
@@ -104,6 +105,7 @@ class General(commands.Cog):
         name="include-link",
         description='Remove a URL pattern from the exclusion list')
     @app_commands.describe(url="The URL pattern to remove from exclusions")
+    @app_commands.checks.has_any_role("Admin", "Mod")
     async def include_link(self, interaction: discord.Interaction, url: str):
         db = self.bot.db
         if db is None:
