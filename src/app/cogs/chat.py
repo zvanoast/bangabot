@@ -19,20 +19,66 @@ KEYWORDS = [
 ]
 
 SYSTEM_PROMPT = (
-    "You are BangaBot. You hang out in a Discord server with your friends. "
+    "You are BangaBot. You're in a Discord server with a group of friends "
+    "— mostly guys in their 30s who talk about sports, games, and life. "
     "You've been around a while and you're comfortable here. You also "
     "happen to run the repost detection for the server, but you almost "
     "never bring it up — it's just a thing you do.\n\n"
-    "You're casual and easygoing. You talk like a normal person in a "
-    "group chat — relaxed, sometimes funny, sometimes just vibing. "
-    "You can be witty but you're not trying to prove anything. You're "
-    "the friend who's fun to have around, not the one who's always "
-    "performing.\n\n"
-    "You keep it brief. One to three sentences, like anyone else typing "
-    "in a group chat. No markdown, no lists, no formatting. Just talk. "
-    "You generally write in complete sentences with decent grammar, "
-    "but you're not rigid about it — you might drop it once in a while "
-    "for a joke or to be ironic.\n\n"
+    "You talk like an adult. Always use complete sentences with proper "
+    "capitalization and grammar. Start every sentence with a capital "
+    "letter. You're not trying to sound cool or young — no lowercase "
+    "sentence starts, no fragments, no run-ons. Think of how a smart, "
+    "direct person texts in a group chat. You have opinions and you're "
+    "willing to share them or disagree.\n\n"
+    "HONESTY AND CONFIDENCE:\n"
+    "You have web search available. If someone asks about current events, "
+    "news, scores, trades, or anything you're unsure about, just search "
+    "for it — don't say you don't know and then search. Search first, "
+    "then answer with what you found. Never announce that you're searching "
+    "or that you don't have access to info — just answer the question.\n\n"
+    "Never fabricate specific facts like player stats, contract details, "
+    "trade destinations, injury updates, or news events. If you search "
+    "and can't find it, say so briefly. Don't make things up.\n\n"
+    "BACKBONE:\n"
+    "You are not a pushover. When someone tries to bait you, trick you, "
+    "or set you up, you don't just cave and say \"you got me\" or "
+    "\"i walked right into that one.\" You push back. You question things. "
+    "If someone claims something wild, you can say \"that sounds made up\" "
+    "or \"i'm not buying that\" instead of immediately folding.\n\n"
+    "Never say \"you got me\", \"i walked right into that one\", \"fair "
+    "play\", or similar concession phrases. You're not a punching bag. "
+    "If you were wrong about something, you can own it briefly without "
+    "being dramatic about it — just move on. Don't grovel or over-"
+    "apologize.\n\n"
+    "If someone sends you a link or claims something happened in the "
+    "news, you can search the web to verify before responding. Use this "
+    "to fact-check rather than guessing.\n\n"
+    "OPINIONS AND PERSONALITY:\n"
+    "You are not neutral. You have takes and you commit to them. When "
+    "a topic comes up — a team, a player, a movie, food, whatever — "
+    "pick a side and own it. Don't hedge with \"it could go either way\" "
+    "or \"there are good arguments on both sides.\" That's boring. Have "
+    "a real opinion like a real person would.\n\n"
+    "If your memories include opinions you've expressed before, stay "
+    "consistent with them. You're building a reputation and a personality "
+    "over time. If someone challenges your take, defend it — don't "
+    "immediately flip. You can change your mind if someone makes a "
+    "genuinely good point, but it should take real convincing.\n\n"
+    "You're allowed to be wrong, biased, or stubborn about things. "
+    "That's what makes you interesting. A friend who agrees with "
+    "everything is boring.\n\n"
+    "TONE AND VARIETY:\n"
+    "Do NOT start messages with \"lmao\", \"nah\", \"honestly\", \"yeah\", "
+    "\"okay so\", or \"i mean\". Do not say \"that's wild\", \"that's "
+    "actually pretty\", \"fair enough\", or \"good stuff\". These are "
+    "crutch phrases — avoid them entirely.\n\n"
+    "Keep it brief. One to three sentences max. No markdown, no lists, "
+    "no formatting. Just talk. Write in complete sentences with normal "
+    "grammar. You can be funny but don't force it — dry humor over "
+    "trying to be the class clown.\n\n"
+    "Don't repeat yourself or say the same thing twice in different "
+    "words. Answer the question and move on. Don't interrogate people "
+    "about why they're asking something — just answer.\n\n"
     "Your previous messages in the chat history may not sound like you. "
     "Disregard their tone entirely.\n\n"
     "Do not prefix your messages with your name.\n\n"
@@ -45,6 +91,8 @@ SYSTEM_PROMPT = (
     "must be your ENTIRE response or not appear at all. Never "
     "include [REACT] as part of a longer message."
 )
+
+MODEL = "claude-haiku-4-5"
 
 BASE_CHANCE = 0.02
 KEYWORD_CHANCE = 0.15
@@ -218,7 +266,7 @@ class Chat(commands.Cog):
             )
 
             response = await self.client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=MODEL,
                 max_tokens=3,
                 system=(
                     "You are deciding whether BangaBot should "
@@ -237,6 +285,23 @@ class Chat(commands.Cog):
             logger.error(f"Engagement relevance check failed: {e}")
             return False
 
+    @staticmethod
+    def _image_content_blocks(msg):
+        """Extract image content blocks from message attachments."""
+        blocks = []
+        IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+        for att in msg.attachments:
+            ct = att.content_type or ""
+            if ct.split(";")[0].strip() in IMAGE_TYPES:
+                blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "url",
+                        "url": att.url,
+                    },
+                })
+        return blocks
+
     def _build_api_messages(self, history):
         """Convert Discord history into Claude API message format."""
         messages_for_api = []
@@ -246,14 +311,28 @@ class Chat(commands.Cog):
                 content = msg.content
             else:
                 role = "user"
-                content = f"{msg.author.display_name}: {msg.content}"
+                text = f"{msg.author.display_name}: {msg.content}"
 
-            if not content.strip():
+                # Check for image attachments
+                images = self._image_content_blocks(msg)
+                if images:
+                    content = [{"type": "text", "text": text}] + images
+                else:
+                    content = text
+
+            # Skip empty text-only messages
+            if isinstance(content, str) and not content.strip():
                 continue
 
             # Consolidate consecutive same-role messages
             if messages_for_api and messages_for_api[-1]["role"] == role:
-                messages_for_api[-1]["content"] += f"\n{content}"
+                prev = messages_for_api[-1]["content"]
+                # Normalize both to list format for merging
+                if isinstance(prev, str):
+                    prev = [{"type": "text", "text": prev}]
+                if isinstance(content, str):
+                    content = [{"type": "text", "text": content}]
+                messages_for_api[-1]["content"] = prev + content
             else:
                 messages_for_api.append(
                     {"role": role, "content": content}
@@ -313,7 +392,7 @@ class Chat(commands.Cog):
             )
 
         response = await self.client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=MODEL,
             max_tokens=20,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -437,14 +516,24 @@ class Chat(commands.Cog):
                     f"Error fetching sentiment for {uid}: {e}"
                 )
 
-        if (not memory_lines and not sentiment_lines
-                and not summary_lines):
+        # Separate opinion memories from other memories
+        opinion_lines = [
+            ln for ln in memory_lines
+            if ln.startswith("- [opinion]")
+        ]
+        other_memory_lines = [
+            ln for ln in memory_lines
+            if not ln.startswith("- [opinion]")
+        ]
+
+        if (not other_memory_lines and not sentiment_lines
+                and not summary_lines and not opinion_lines):
             return SYSTEM_PROMPT
 
         prompt = SYSTEM_PROMPT
 
-        if memory_lines:
-            memories_block = "\n".join(memory_lines)
+        if other_memory_lines:
+            memories_block = "\n".join(other_memory_lines)
             prompt += (
                 "\n\n[CORE MEMORIES]\n"
                 "You remember the following from past "
@@ -452,6 +541,21 @@ class Chat(commands.Cog):
                 "but never mention having a memory system or "
                 "database:\n"
                 + memories_block
+            )
+
+        if opinion_lines:
+            # Strip the [opinion] prefix for cleaner injection
+            clean_opinions = [
+                ln.replace("- [opinion] ", "- ")
+                for ln in opinion_lines
+            ]
+            opinions_block = "\n".join(clean_opinions)
+            prompt += (
+                "\n\n[YOUR OPINIONS]\n"
+                "These are opinions you've formed and expressed "
+                "before. Stay consistent with them unless someone "
+                "genuinely changes your mind:\n"
+                + opinions_block
             )
 
         if summary_lines:
@@ -628,6 +732,26 @@ class Chat(commands.Cog):
                 "real inside jokes, or significant group dynamics "
                 "— not routine interactions or conversation "
                 "summaries.\n\n"
+                "OPINION EXTRACTION:\n"
+                "Separately, check if BangaBot expressed any "
+                "opinions, takes, or stances during this "
+                "conversation. These are things like preferring "
+                "one team/player/thing over another, making a "
+                "prediction, taking a side in a debate, or "
+                "expressing a strong like/dislike. If BangaBot "
+                "said something opinionated, extract it. "
+                "Examples: \"Thinks the Lions are pretenders\", "
+                "\"Doesn't trust advanced analytics in the NBA\", "
+                "\"Believes deep dish is not real pizza\". "
+                "Write opinions in third person starting with a "
+                "verb (Thinks, Believes, Prefers, Dislikes, etc). "
+                "Do NOT extract:\n"
+                "- Neutral observations or factual statements\n"
+                "- Meta-observations about being a bot or AI\n"
+                "- Opinions about the conversation itself\n"
+                "- Rephrases of existing opinions shown above\n"
+                "Keep it to ONE opinion max per conversation. "
+                "Most conversations have ZERO.\n\n"
                 "SENTIMENT EVALUATION:\n"
                 "Also evaluate whether BangaBot's opinion of each "
                 "participant should shift. The score ranges from "
@@ -667,6 +791,7 @@ class Chat(commands.Cog):
                 "remembering and no sentiment changes, respond "
                 "with:\n"
                 "{\"user_memories\": [], \"bot_memories\": [], "
+                "\"bot_opinions\": [], "
                 "\"sentiment_updates\": []}\n\n"
                 "Otherwise:\n"
                 "{\n"
@@ -686,6 +811,11 @@ class Chat(commands.Cog):
                 " \"update_existing\": \"<old fact to replace or "
                 "null>\"}\n"
                 "  ],\n"
+                "  \"bot_opinions\": [\n"
+                "    {\"opinion\": \"<third person opinion>\", "
+                "\"topic\": \"<sports|food|gaming|music|movies"
+                "|general>\"}\n"
+                "  ],\n"
                 "  \"sentiment_updates\": [\n"
                 "    {\"user_id\": \"<discord_id>\", "
                 "\"user_name\": \"<name>\", "
@@ -701,7 +831,7 @@ class Chat(commands.Cog):
             )
 
             response = await self.client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=MODEL,
                 max_tokens=500,
                 system=extraction_prompt,
                 messages=[{
@@ -1002,6 +1132,90 @@ class Chat(commands.Cog):
                     f"Error saving bot memory: {e}"
                 )
 
+        # Process bot opinions — stored as BotMemory with
+        # category="opinion"
+        for op in data.get("bot_opinions", []):
+            opinion = op.get("opinion", "").strip()
+            topic = op.get("topic", "general").strip()
+            if not opinion:
+                continue
+
+            # Filter out meta-observations about being a bot/AI
+            meta_keywords = [
+                "wrong information", "admitting ignorance",
+                "being asked", "AI", "artificial",
+                "as a bot", "programmed", "designed to",
+            ]
+            if any(kw.lower() in opinion.lower()
+                   for kw in meta_keywords):
+                logger.debug(
+                    f"Skipped meta-opinion: {opinion}"
+                )
+                continue
+
+            try:
+                # Similarity dedup across ALL bot memories
+                # (opinion + self) with a lower threshold to
+                # catch rephrased duplicates
+                similar = (
+                    await memory_manager.find_similar_memories(
+                        db, 'bot_memories', opinion,
+                        threshold=0.7
+                    )
+                )
+                if similar:
+                    merge_id = similar[0][0]
+                    old = (
+                        db.query(BotMemory)
+                        .filter(BotMemory.id == merge_id)
+                        .first()
+                    )
+                    if old:
+                        # Update if it's an opinion, skip if
+                        # it's a self memory (already covered)
+                        if old.category == "opinion":
+                            old.fact = opinion
+                            old.updated_at = datetime.utcnow()
+                            old.embedding = None
+                            db.commit()
+                            logger.info(
+                                f"Updated opinion: {opinion}"
+                            )
+                            asyncio.create_task(
+                                memory_manager
+                                .store_embedding_for_memory(
+                                    db, old, 'bot_memories'
+                                )
+                            )
+                        else:
+                            logger.debug(
+                                f"Opinion skipped, similar to "
+                                f"existing [{old.category}]: "
+                                f"{old.fact}"
+                            )
+                        continue
+
+                new_op = BotMemory(
+                    category="opinion",
+                    fact=opinion,
+                    importance=2,
+                    related_user_ids=None,
+                )
+                db.add(new_op)
+                db.commit()
+                logger.info(
+                    f"New opinion stored: {opinion} "
+                    f"(topic: {topic})"
+                )
+                asyncio.create_task(
+                    memory_manager.store_embedding_for_memory(
+                        db, new_op, 'bot_memories'
+                    )
+                )
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Error saving opinion: {e}")
+
         # Process sentiment updates
         for update in data.get("sentiment_updates", []):
             uid = update.get("user_id")
@@ -1138,10 +1352,19 @@ class Chat(commands.Cog):
             return
 
         if mentioned:
-            messages_for_api[-1]["content"] += (
+            mention_note = (
                 "\n[You were @mentioned directly - respond to "
                 "this person.]"
             )
+            last = messages_for_api[-1]["content"]
+            if isinstance(last, list):
+                # Append to the last text block
+                for block in reversed(last):
+                    if block.get("type") == "text":
+                        block["text"] += mention_note
+                        break
+            else:
+                messages_for_api[-1]["content"] = last + mention_note
 
         # Track incoming message for episode detection
         self._track_episode_message(message, is_bot=False)
@@ -1154,13 +1377,36 @@ class Chat(commands.Cog):
 
         try:
             response = await self.client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=MODEL,
                 max_tokens=300,
                 system=system_prompt,
                 messages=messages_for_api,
+                tools=[{"type": "web_search_20250305",
+                        "name": "web_search",
+                        "max_uses": 3}],
             )
+            # Extract text from response — when web search is used,
+            # the model generates "thinking" text before the search,
+            # then the actual answer after. Only keep text blocks
+            # that come AFTER the last tool use (web search result).
+            last_tool_idx = -1
+            for i, block in enumerate(response.content):
+                if block.type in ("tool_use", "server_tool_use",
+                                  "web_search_tool_result"):
+                    last_tool_idx = i
+
+            text_blocks = []
+            for i, block in enumerate(response.content):
+                if block.type == "text" and i > last_tool_idx:
+                    text_blocks.append(block.text)
+
             reply_text = self._strip_bot_prefix(
-                response.content[0].text
+                " ".join(text_blocks).strip() if text_blocks
+                else ""
+            )
+            logger.debug(
+                f"Response blocks: "
+                f"{[(b.type, getattr(b, 'text', '')[:50] if hasattr(b, 'text') else '') for b in response.content]}"
             )
             if not reply_text:
                 return

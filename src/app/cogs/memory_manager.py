@@ -539,8 +539,8 @@ def _cosine_similarity_sync(db, table_name, row_embedding,
 
 
 async def find_similar_memories(db, table_name, fact_text,
-                                user_id=None):
-    """Find memories similar to fact_text (>0.85 cosine sim).
+                                user_id=None, threshold=0.85):
+    """Find memories similar to fact_text (>threshold cosine sim).
 
     Returns list of (row_id, similarity_score) tuples,
     or empty list if no embeddings available.
@@ -552,7 +552,7 @@ async def find_similar_memories(db, table_name, fact_text,
         filter_col = 'user_id' if user_id else None
         return await asyncio.to_thread(
             _cosine_similarity_sync, db, table_name, vec,
-            None, 0.85, filter_col, user_id
+            None, threshold, filter_col, user_id
         )
     except Exception as e:
         logger.error(f"Similarity search failed: {e}")
