@@ -76,6 +76,7 @@ class General(commands.Cog):
         name="exclude-link",
         description='Add a URL pattern to exclude from repost detection')
     @app_commands.describe(url="Base URL to exclude (e.g. giphy.com, tenor.com)")
+    @app_commands.guild_only()
     @app_commands.checks.has_any_role("Admin", "Mod")
     async def exclude_link(self, interaction: discord.Interaction, url: str):
         db = self.bot.db
@@ -105,6 +106,7 @@ class General(commands.Cog):
         name="include-link",
         description='Remove a URL pattern from the exclusion list')
     @app_commands.describe(url="The URL pattern to remove from exclusions")
+    @app_commands.guild_only()
     @app_commands.checks.has_any_role("Admin", "Mod")
     async def include_link(self, interaction: discord.Interaction, url: str):
         db = self.bot.db
@@ -130,6 +132,7 @@ class General(commands.Cog):
     @app_commands.command(
         name="list-exclusions",
         description='Show all URL patterns excluded from repost detection')
+    @app_commands.guild_only()
     async def list_exclusions(self, interaction: discord.Interaction):
         db = self.bot.db
         if db is None:
@@ -164,6 +167,24 @@ class General(commands.Cog):
             return self.eveningResponses[random.randint(0, len(self.eveningResponses) - 1)]
         else:
             return self.commonResponses[random.randint(0, len(self.commonResponses) - 1)]
+
+    async def cog_app_command_error(
+        self, interaction: discord.Interaction, error
+    ):
+        if isinstance(error, app_commands.errors.MissingAnyRole):
+            await interaction.response.send_message(
+                "You need the Admin or Mod role to use this.",
+                ephemeral=True)
+        elif isinstance(error, app_commands.errors.NoPrivateMessage):
+            await interaction.response.send_message(
+                "This command can only be used in a server.",
+                ephemeral=True)
+        else:
+            logger.error(f"Command error: {error}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "Something went wrong.", ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(General(bot))
