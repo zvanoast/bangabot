@@ -104,6 +104,8 @@ IS_PRODUCTION = (
 )
 
 
+ALLOWED_CHANNEL = 'bangabot-shitposting'
+
 EPISODE_GAP_SECONDS = 1800  # 30 minutes
 EPISODE_VOLUME_THRESHOLD = 50
 EPISODE_MIN_MESSAGES = 5
@@ -120,8 +122,11 @@ class Chat(commands.Cog):
         self.channel_msg_counts = {}
         self._backfill_done = False
 
+        llm_enabled = (
+            os.getenv('ENABLE_LLM', 'false').lower() == 'true'
+        )
         api_key = os.getenv('ANTHROPIC_API_KEY')
-        if api_key:
+        if llm_enabled and api_key:
             try:
                 from anthropic import AsyncAnthropic
                 self.client = AsyncAnthropic(api_key=api_key)
@@ -132,9 +137,14 @@ class Chat(commands.Cog):
                 )
                 self.client = None
         else:
-            logger.warning(
-                "ANTHROPIC_API_KEY not set - Chat cog will be disabled"
-            )
+            if not llm_enabled:
+                logger.warning(
+                    "ENABLE_LLM is not true - Chat cog LLM disabled"
+                )
+            else:
+                logger.warning(
+                    "ANTHROPIC_API_KEY not set - Chat cog LLM disabled"
+                )
             self.client = None
 
     @commands.Cog.listener()
@@ -160,6 +170,15 @@ class Chat(commands.Cog):
         # Allow DMs only in dev/test environments
         if is_dm and IS_PRODUCTION:
             return
+
+        # Only respond in the designated channel (or DMs in dev)
+        channel_name = getattr(message.channel, 'name', None)
+        if not is_dm and channel_name != ALLOWED_CHANNEL:
+            return
+
+        # Track episodes only in the allowed channel
+        if not is_dm:
+            self._track_episode_message(message, is_bot=False)
 
         mentioned = self.bot.user in message.mentions or is_dm
         logger.info(
@@ -1365,9 +1384,6 @@ class Chat(commands.Cog):
                         break
             else:
                 messages_for_api[-1]["content"] = last + mention_note
-
-        # Track incoming message for episode detection
-        self._track_episode_message(message, is_bot=False)
 
         system_prompt = (
             await self._build_system_prompt_with_memories(

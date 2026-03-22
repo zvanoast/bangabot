@@ -89,7 +89,10 @@ jobs:
           echo "DBNAME=${{ secrets.DBNAME }}" >> .env
           echo "DBPORT=5432" >> .env
           echo "DBHOST=db" >> .env
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
+          echo "ENABLE_LLM=${{ vars.ENABLE_LLM }}" >> .env
+          if [ "${{ vars.ENABLE_LLM }}" = "true" ]; then
+            echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
+          fi
       
       - name: Create docker-compose.prod.yml
         run: |
